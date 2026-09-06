@@ -1,0 +1,5 @@
+schema: "1.0.0"
+created: "2026-09-05"
+goal: "Document existing behavior."
+affected_areas: ["docs"]
+skip_specs: true
