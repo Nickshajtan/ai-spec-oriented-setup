@@ -106,7 +106,9 @@ export interface StartInterviewInput {
   projectRoot: string;
   changeName: string;
   roughIdea: string;
-  title?: string;
+  description?: string;
+  goal?: string;
+  schema?: string;
 }
 
 export interface AnswerInterviewInput {

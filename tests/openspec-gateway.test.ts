@@ -8,15 +8,15 @@ import type { ProcessResult, ProcessRunner } from "../src/index.ts";
 
 class FakeProcessRunner implements ProcessRunner {
   calls: Array<{ command: string; args: string[]; cwd: string }> = [];
-  private readonly result: ProcessResult;
+  private readonly results: ProcessResult[];
 
-  constructor(result: ProcessResult) {
-    this.result = result;
+  constructor(...results: ProcessResult[]) {
+    this.results = results;
   }
 
   async run(command: string, args: string[], options: { cwd: string }): Promise<ProcessResult> {
     this.calls.push({ command, args, cwd: options.cwd });
-    return this.result;
+    return this.results.shift() ?? { exitCode: 0, stdout: "", stderr: "" };
   }
 }
 
@@ -26,9 +26,10 @@ async function fixtureProject(): Promise<string> {
   return projectRoot;
 }
 
-test("valid change is validated through official CLI and emits OpenSpec events", async () => {
+test("validate uses verified OpenSpec CLI command and preserves raw output", async () => {
   const projectRoot = await fixtureProject();
-  const runner = new FakeProcessRunner({ exitCode: 0, stdout: JSON.stringify({ ok: true }), stderr: "" });
+  const raw = { items: [{ id: "add-health-check", valid: true }] };
+  const runner = new FakeProcessRunner({ exitCode: 0, stdout: JSON.stringify(raw), stderr: "" });
   const bus = new MiddlewareBus();
   const events: string[] = [];
 
@@ -54,33 +55,85 @@ test("valid change is validated through official CLI and emits OpenSpec events",
 
   assert.equal(result.ok, true);
   assert.equal(result.status, "valid");
-  assert.equal(result.context?.system, "openspec");
-  assert.equal(result.context?.openspec.metadata?.known?.schema, "1.0.0");
-  assert.match(result.context?.openspec.metadata?.raw ?? "", /goal:/);
-  assert.equal(result.context?.openspec.artifacts.proposal?.path, "openspec/changes/add-health-check/proposal.md");
-  assert.deepEqual(
-    result.context?.openspec.artifacts.specs.map((artifact) => artifact.path),
-    ["openspec/changes/add-health-check/specs/health-check/spec.md"],
-  );
-  assert.deepEqual(result.context?.openspec.validation?.output, { ok: true });
+  assert.deepEqual(result.context?.openspec.validation?.raw, raw);
   assert.deepEqual(events, ["openspec.validate.before", "openspec.validate.after"]);
   assert.deepEqual(runner.calls[0]?.args, ["validate", "add-health-check", "--json", "--no-interactive"]);
 });
 
-test("invalid change preserves CLI validation output", async () => {
+test("status normalizes generic artifacts without standard artifact assumptions", async () => {
   const projectRoot = await fixtureProject();
-  const runner = new FakeProcessRunner({
-    exitCode: 1,
-    stdout: JSON.stringify({ errors: [{ message: "invalid change" }] }),
-    stderr: "invalid change",
+  const raw = {
+    artifacts: [
+      {
+        id: "capability-brief",
+        path: "openspec/changes/add-health-check/capability.md",
+        status: "missing",
+        dependencies: ["context-note"],
+        metadata: { custom: true },
+      },
+    ],
+    metadata: { schema: "custom-flow" },
+    extra: { retained: true },
+  };
+  const runner = new FakeProcessRunner({ exitCode: 0, stdout: JSON.stringify(raw), stderr: "" });
+
+  const result = await new CliOpenSpecGateway({ processRunner: runner }).getStatus({ projectRoot, changeName: "add-health-check" });
+
+  assert.equal(result.status, "status-read");
+  assert.deepEqual(result.context?.openspec.status?.raw, raw);
+  assert.equal(result.context?.openspec.artifacts[0]?.id, "capability-brief");
+  assert.deepEqual(result.context?.openspec.artifacts[0]?.dependencies, ["context-note"]);
+  assert.deepEqual(result.context?.openspec.metadata, { schema: "custom-flow" });
+  assert.deepEqual(runner.calls[0]?.args, ["status", "--change", "add-health-check", "--json"]);
+});
+
+test("instructions preserve raw structured information and merge generic artifact data", async () => {
+  const projectRoot = await fixtureProject();
+  const raw = {
+    artifact: {
+      id: "acceptance-matrix",
+      path: "openspec/changes/add-health-check/acceptance.md",
+      instructions: { sections: ["Behavior", "Failure"] },
+      dependsOn: ["capability-brief"],
+    },
+    metadata: { source: "openspec" },
+  };
+  const runner = new FakeProcessRunner({ exitCode: 0, stdout: JSON.stringify(raw), stderr: "" });
+
+  const result = await new CliOpenSpecGateway({ processRunner: runner }).getInstructions({ projectRoot, changeName: "add-health-check" });
+
+  assert.equal(result.status, "instructions-read");
+  assert.deepEqual(result.context?.openspec.instructions?.raw, raw);
+  assert.equal(result.context?.openspec.artifacts[0]?.id, "acceptance-matrix");
+  assert.deepEqual(result.context?.openspec.artifacts[0]?.dependencies, ["capability-brief"]);
+  assert.deepEqual(runner.calls[0]?.args, ["instructions", "--change", "add-health-check", "--json"]);
+});
+
+test("create change uses verified openspec new change command", async () => {
+  const projectRoot = await fixtureProject();
+  const runner = new FakeProcessRunner({ exitCode: 0, stdout: JSON.stringify({ change: "new-change" }), stderr: "" });
+
+  const result = await new CliOpenSpecGateway({ processRunner: runner }).createChange({
+    projectRoot,
+    changeName: "new-change",
+    description: "Create a capability",
+    goal: "Capture requirements",
+    schema: "spec-driven",
   });
 
-  const result = await new CliOpenSpecGateway({ processRunner: runner }).validate({ projectRoot, changeName: "add-health-check" });
-
-  assert.equal(result.ok, false);
-  assert.equal(result.status, "invalid");
-  assert.equal(result.context?.openspec.validation?.valid, false);
-  assert.deepEqual(result.context?.openspec.validation?.output, { errors: [{ message: "invalid change" }] });
+  assert.equal(result.status, "created");
+  assert.deepEqual(runner.calls[0]?.args, [
+    "new",
+    "change",
+    "new-change",
+    "--json",
+    "--description",
+    "Create a capability",
+    "--goal",
+    "Capture requirements",
+    "--schema",
+    "spec-driven",
+  ]);
 });
 
 test("missing change is distinct from invalid OpenSpec validation", async () => {
@@ -116,20 +169,6 @@ test("middleware deny before validation prevents CLI execution", async () => {
   assert.equal(runner.calls.length, 0);
 });
 
-test("status and instructions preserve machine-readable CLI output", async () => {
-  const projectRoot = await fixtureProject();
-  const runner = new FakeProcessRunner({ exitCode: 0, stdout: JSON.stringify({ artifactGraph: ["proposal", "tasks"] }), stderr: "" });
-  const gateway = new CliOpenSpecGateway({ processRunner: runner });
-
-  const status = await gateway.getStatus({ projectRoot, changeName: "add-health-check" });
-  const instructions = await gateway.getInstructions({ projectRoot, changeName: "add-health-check" });
-
-  assert.equal(status.status, "status-read");
-  assert.deepEqual(status.context?.openspec.status, { artifactGraph: ["proposal", "tasks"] });
-  assert.equal(instructions.status, "instructions-read");
-  assert.deepEqual(instructions.context?.openspec.instructions, { artifactGraph: ["proposal", "tasks"] });
-});
-
 test("path traversal change names are rejected", async () => {
   const projectRoot = await fixtureProject();
   const runner = new FakeProcessRunner({ exitCode: 0, stdout: "", stderr: "" });
@@ -138,6 +177,20 @@ test("path traversal change names are rejected", async () => {
 
   assert.equal(result.status, "path-rejected");
   assert.equal(runner.calls.length, 0);
+});
+
+test("OpenSpec CLI unavailable is normalized", async () => {
+  const projectRoot = await fixtureProject();
+  const runner = new FakeProcessRunner({
+    exitCode: -1,
+    stdout: "",
+    stderr: "",
+    error: Object.assign(new Error("not found"), { code: "ENOENT" }),
+  });
+
+  const result = await new CliOpenSpecGateway({ processRunner: runner }).validate({ projectRoot, changeName: "add-health-check" });
+
+  assert.equal(result.status, "cli-unavailable");
 });
 
 test("real OpenSpec CLI fixture validation runs when CLI is available", async (t) => {

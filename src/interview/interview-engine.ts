@@ -40,7 +40,9 @@ export class InterviewEngine {
     const createChange = await this.gateway.createChange({
       projectRoot: input.projectRoot,
       changeName: input.changeName,
-      title: input.title,
+      description: input.description,
+      goal: input.goal,
+      schema: input.schema,
     });
     const status = await this.gateway.getStatus(input);
     const instructions = await this.gateway.getInstructions(input);

@@ -8,24 +8,37 @@ export interface OpenSpecChangeInput {
 export interface OpenSpecCreateChangeInput {
   projectRoot: string;
   changeName: string;
-  title?: string;
+  description?: string;
+  goal?: string;
+  schema?: string;
 }
 
-export interface OpenSpecArtifactRef {
-  kind: string;
+export interface OpenSpecArtifact {
+  id: string;
   path: string;
-  absolutePath: string;
+  status?: string;
+  dependencies?: string[];
+  instructions?: unknown;
+  metadata?: Record<string, unknown>;
+  raw?: unknown;
 }
 
-export interface OpenSpecMetadata {
-  raw?: string;
-  known?: {
-    schema?: string;
-    created?: string;
-    goal?: string;
-    affectedAreas?: string[];
-    skipSpecs?: boolean;
-  };
+export interface OpenSpecCommandResult<TNormalized> {
+  normalized: TNormalized;
+  raw?: unknown;
+  stdout: string;
+  stderr: string;
+  exitCode: number;
+}
+
+export interface OpenSpecStatus {
+  artifacts: OpenSpecArtifact[];
+  metadata: Record<string, unknown>;
+}
+
+export interface OpenSpecInstructions {
+  artifacts: OpenSpecArtifact[];
+  metadata: Record<string, unknown>;
 }
 
 export interface SpecContext {
@@ -33,18 +46,12 @@ export interface SpecContext {
   changeName: string;
   projectRoot: string;
   openspec: {
-    metadata?: OpenSpecMetadata;
-    artifacts: {
-      proposal?: OpenSpecArtifactRef;
-      design?: OpenSpecArtifactRef;
-      tasks?: OpenSpecArtifactRef;
-      metadata?: OpenSpecArtifactRef;
-      specs: OpenSpecArtifactRef[];
-      other: OpenSpecArtifactRef[];
-    };
+    artifacts: OpenSpecArtifact[];
+    metadata?: Record<string, unknown>;
+    create?: OpenSpecCommandResult<Record<string, unknown>>;
     validation?: OpenSpecValidation;
-    status?: unknown;
-    instructions?: unknown;
+    status?: OpenSpecCommandResult<OpenSpecStatus>;
+    instructions?: OpenSpecCommandResult<OpenSpecInstructions>;
   };
   interview?: Record<string, unknown>;
   review?: Record<string, unknown>;
@@ -53,7 +60,7 @@ export interface SpecContext {
 export interface OpenSpecValidation {
   valid: boolean;
   exitCode: number;
-  output?: unknown;
+  raw?: unknown;
   stdout: string;
   stderr: string;
 }

@@ -26,10 +26,7 @@ const specContext: SpecContext = {
       requires: ["runtime environment", "scale", "invalidation behavior", "failure behavior"],
       dependencyArtifacts: ["product-context.md"],
     },
-    artifacts: {
-      specs: [],
-      other: [{ kind: "custom", path: "openspec/changes/add-redis-cache/product-context.md", absolutePath: "/project/file" }],
-    },
+    artifacts: [{ id: "product-context", path: "openspec/changes/add-redis-cache/product-context.md" }],
   },
 };
 

@@ -1,4 +1,5 @@
 import type { ModelPort } from "../model/types.ts";
+import { parseModelJson } from "../model/structured-output.ts";
 import type { InterviewSession, QuestionPlan, QuestionPlanner } from "./types.ts";
 
 export interface ModelQuestionPlannerConfig {
@@ -62,7 +63,7 @@ export class ModelQuestionPlanner implements QuestionPlanner {
       },
     });
 
-    return normalizePlan(parseJsonObject(response.content));
+    return normalizePlan(parseModelJson(response.content));
   }
 }
 
@@ -83,29 +84,6 @@ function plannerView(session: InterviewSession): unknown {
     contradictions: session.contradictions.filter((contradiction) => contradiction.status === "unresolved"),
     readiness: session.readiness,
   };
-}
-
-function parseJsonObject(content: string): Record<string, unknown> {
-  const trimmed = content.trim();
-  const jsonText = trimmed.startsWith("{") ? trimmed : extractJsonObject(trimmed);
-
-  try {
-    const parsed = JSON.parse(jsonText);
-    if (isObject(parsed)) return parsed;
-  } catch {
-    // handled below
-  }
-
-  throw new Error("Question planner returned invalid JSON.");
-}
-
-function extractJsonObject(text: string): string {
-  const start = text.indexOf("{");
-  const end = text.lastIndexOf("}");
-  if (start === -1 || end === -1 || end <= start) {
-    throw new Error("Question planner returned no JSON object.");
-  }
-  return text.slice(start, end + 1);
 }
 
 function normalizePlan(value: Record<string, unknown>): QuestionPlan {

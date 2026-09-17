@@ -1,470 +1,868 @@
-# Implementation Specification — Repository Realignment and Engineering Baseline
+# Implementation Specification — OpenSpec Authority Cleanup & Artifact I/O Boundary
 
 ## Context
 
-This repository has changed direction.
+The repository already contains the implementation of Specs 01 and 02.
 
-The product is now an **OpenSpec-based interactive feature specification assistant**.
+The current product direction is:
 
-Its purpose is to guide a human through an adaptive dialogue/quiz, collect missing implementation information, detect material gaps/ambiguities/contradictions, generate native OpenSpec changes through OpenSpec's own workflow, and always perform a final AI review.
+> An OpenSpec-based interactive specification assistant that gathers enough material information through an adaptive dialogue/quiz and produces high-quality OpenSpec feature specifications.
 
-The repository currently contains infrastructure from an earlier generic AI control-plane direction. Preserve useful primitives, but remove or demote infrastructure that does not serve the new product.
+The product is a meaningful orchestration layer over OpenSpec, but it must not recreate OpenSpec itself.
 
-Do not rewrite working code unnecessarily.
+OpenSpec remains the authority for:
 
-## Product boundary
+- change structure;
+- schema selection;
+- artifact graph;
+- artifact dependencies;
+- artifact instructions;
+- artifact paths;
+- validation.
 
-Target conceptual architecture:
+Our Core owns:
 
-```text
-Agent Skill ─────────────┐
-                        │
-CLI / Agent Launcher ───┤
-                        ▼
-                 Specifier Core
-                 ├── Interview
-                 ├── enriched spec context
-                 ├── gap/ambiguity handling
-                 ├── OpenSpec orchestration
-                 └── mandatory review
-                        │
-          ┌─────────────┼─────────────┐
-          ▼             ▼             ▼
-    OpenSpecGateway   ModelPort   Domain EventBus
-          │             │
-     OpenSpec CLI   LiteLLM adapter
+- interview state;
+- elicitation;
+- facts, assumptions and explicit choices;
+- gap detection;
+- readiness;
+- contradiction tracking;
+- model-assisted reasoning;
+- future artifact generation/review orchestration.
 
-Optional cross-cutting behavior:
-Domain EventBus → middleware
-```
+Supporting concerns such as logging and simple limits remain thin middleware.
 
-OpenSpec is the canonical specification framework. The project enriches OpenSpec; it must not replace it with a narrower internal specification model.
-
-## 1. Inspect before modifying
-
-Before implementation:
-
-1. Inspect the entire current repository.
-2. Identify all consumers of:
-    - routing;
-    - provider resolution;
-    - model execution;
-    - audit;
-    - middleware events;
-    - OpenSpec adapter;
-    - shared types.
-3. Run the current tests and record the baseline.
-4. Preserve valuable code where compatible with this specification.
-
-Do not retain obsolete architecture merely to keep old tests passing.
+Model invocation remains behind `ModelPort`. `LiteLLMModelAdapter` is one implementation and must remain thin.
 
 ---
 
-## 2. Remove model routing from the product
+# Goal
 
-Model routing is a separate future product/service.
+Prepare the current architecture for Step 03 by removing remaining duplicated OpenSpec domain knowledge from our integration layer and introducing a minimal artifact-writing boundary.
 
-Remove the current model-routing subsystem from active production architecture, including obsolete:
-
-- `StaticModelRouter`;
-- semantic model tiers;
-- risk/complexity promotion rules;
-- task-type-to-model routing;
-- model-tier middleware/examples;
-- routing-specific documentation and tests.
-
-If the existing routing implementation contains genuinely non-trivial reusable code, move only that valuable prototype into a clearly isolated location such as:
+After this change:
 
 ```text
-future-tools/model-router/
+OpenSpec CLI
+    │
+    │ authoritative status / instructions /
+    │ artifact graph / artifact paths
+    ▼
+OpenSpecGateway
+    │
+    │ normalized transport/domain representation
+    ▼
+Core
+    │
+    ├── InterviewEngine
+    ├── QuestionPlanner
+    └── future ArtifactGeneration workflow
+              │
+              ▼
+        ArtifactWriter
+              │
+              ▼
+          filesystem
 ```
 
-Include a README stating that it is:
-
-- not part of Specifier runtime;
-- not imported by production code;
-- retained only as source material for a future standalone model-routing tool.
-
-Do not archive trivial code that is cheaper to recreate.
+This specification MUST NOT implement the actual Step 03 artifact-generation workflow.
 
 ---
 
-## 3. Simplify model execution
+# 1. Inspect Before Modifying
 
-The Core requires model invocation, especially for mandatory specification review.
+Before making changes, inspect the current implementation and tests, especially:
 
-However, provider abstraction is delegated to LiteLLM.
+- `src/openspec/openspec-gateway.ts`
+- `src/openspec/types.ts`
+- `src/interview/*`
+- `src/model/*`
+- `src/middleware/*`
+- `src/process-runner.ts`
+- `src/index.ts`
+- existing OpenSpec fixtures/tests
+- `docs/integrations/openspec.md`
+- `docs/interview-core.md`
+- `AGENTS.md`
+- `README.md`
 
-Target:
+Preserve working behavior unless this specification explicitly changes it.
+
+Do not reintroduce previously removed:
+
+- static model routing;
+- provider resolution;
+- generic execution layer;
+- FinOps subsystem;
+- audit subsystem;
+- control-plane abstractions.
+
+---
+
+# 2. OpenSpec Must Be the Authority
+
+## Problem
+
+The current `CliOpenSpecGateway` still contains knowledge about conventional OpenSpec artifacts.
+
+For example, it explicitly discovers or recognizes concepts such as:
+
+- `proposal.md`
+- `design.md`
+- `tasks.md`
+- `specs/**`
+- `.openspec.yaml`
+
+It also manually parses selected `.openspec.yaml` fields.
+
+This creates a second, partial model of OpenSpec inside this project.
+
+That is undesirable.
+
+OpenSpec may evolve, use custom schemas, define additional artifacts, omit standard artifacts, or change artifact dependencies.
+
+Our integration should consume that information rather than independently reconstruct it.
+
+## Required change
+
+Refactor the OpenSpec integration so that authoritative information returned by OpenSpec CLI is preferred wherever the CLI exposes it.
+
+The Core MUST NOT require hardcoded knowledge of:
 
 ```text
-Specifier Core
-      ↓
-   ModelPort
-      ↓
-LiteLLMModelAdapter
-      ↓
-    LiteLLM
+proposal
+design
+tasks
+specs
 ```
 
-Create/retain a minimal provider-neutral `ModelPort`.
+to operate.
+
+Artifacts should instead be represented generically.
 
 Conceptually:
 
 ```ts
-interface ModelPort {
-    complete(request: ModelRequest): Promise<ModelResponse>;
+interface OpenSpecArtifact {
+  id: string;
+  path?: string;
+  status?: string;
+  dependencies?: string[];
+  instructions?: unknown;
+  metadata?: Record<string, unknown>;
 }
 ```
 
-Model request metadata MAY contain semantic purpose such as `interview` or `review`, but the Specifier must not perform routing based on it.
+This is illustrative, not a mandatory exact interface.
 
-Collapse unnecessary layers around:
-
-- LiteLLM gateway;
-- provider resolver;
-- model executor.
-
-Prefer one thin `LiteLLMModelAdapter`.
-
-Its responsibilities are limited to:
-
-- mapping `ModelRequest` to the LiteLLM API;
-- invoking LiteLLM;
-- normalizing the response;
-- normalizing relevant errors.
-
-It must NOT implement:
-
-- model routing;
-- provider selection;
-- dynamic pricing;
-- FinOps;
-- retries orchestration;
-- model scoring;
-- provider-specific business logic.
-
-LiteLLM is the only supported standalone LLM backend for v1.
+Choose names/types that fit the existing codebase.
 
 ---
 
-## 4. Replace OpenSpecAdapter with an OpenSpec Gateway
+# 3. Do Not Narrow OpenSpec
 
-OpenSpec must own its lifecycle and artifact schema.
+This cleanup must not throw away useful OpenSpec information merely because the current Interview Engine does not use it yet.
 
-Evolve the existing adapter into a thin `OpenSpecGateway` over the official OpenSpec CLI.
+When OpenSpec returns useful structured information that does not deserve a first-class typed property yet, preserve it through an extensible representation.
 
-Reuse existing safe process execution and validation logic where appropriate.
+Prefer a model similar to:
 
-The gateway should eventually support operations required by the product such as:
+```text
+known domain fields
++
+generic metadata / raw structured payload
+```
 
-- creating a change;
-- obtaining change/artifact status;
-- obtaining artifact instructions;
+rather than:
+
+```text
+pick five fields we currently understand
+and discard everything else
+```
+
+The integration boundary may normalize OpenSpec data, but it must not artificially narrow OpenSpec's model.
+
+---
+
+# 4. Remove Manual OpenSpec Metadata Interpretation Where Redundant
+
+Review the current manual `.openspec.yaml` parsing.
+
+If the OpenSpec CLI already exposes equivalent authoritative information, remove the duplicate parser.
+
+Do not build or introduce a general YAML parser merely to reproduce information OpenSpec already provides.
+
+Filesystem inspection is acceptable only where it provides infrastructure behavior that the OpenSpec CLI does not provide.
+
+Examples:
+
+- verifying that a resolved path exists;
+- safely reading/writing a known artifact path;
+- enforcing project-root/path-traversal boundaries.
+
+It must not become a second schema interpreter.
+
+---
+
+# 5. Preserve Raw OpenSpec Information
+
+The gateway should make it possible for future Core behavior to use information OpenSpec understands today without modifying the gateway for every new field.
+
+For relevant CLI responses, preserve the structured raw result in addition to normalized fields where useful.
+
+For example:
+
+```ts
+interface OpenSpecCommandResult<T> {
+  normalized: T;
+  raw?: unknown;
+}
+```
+
+Do not mechanically introduce this exact abstraction if the current types already provide an equivalent mechanism.
+
+The principle matters:
+
+> normalization must not destroy information.
+
+---
+
+# 6. Generic Artifact Representation
+
+Replace standard-artifact-specific representation where practical with a generic artifact collection/graph.
+
+The desired conceptual model is:
+
+```text
+OpenSpec Change
+    │
+    ├── Artifact A
+    │      dependencies: [...]
+    │      path: ...
+    │      status: ...
+    │
+    ├── Artifact B
+    │      dependencies: [...]
+    │      path: ...
+    │      status: ...
+    │
+    └── Artifact N
+```
+
+Core code should be capable of consuming custom OpenSpec schemas without needing code changes merely because artifact names differ.
+
+Do not implement our own dependency resolver if OpenSpec already determines what artifact is available/required next.
+
+---
+
+# 7. OpenSpecGateway Responsibilities
+
+After refactoring, `OpenSpecGateway` should remain a thin anti-corruption boundary around OpenSpec.
+
+Its responsibilities may include:
+
+```ts
+createChange(...)
+getStatus(...)
+getInstructions(...)
+validate(...)
+```
+
+and other similarly thin operations if required by the actual installed OpenSpec CLI.
+
+It MAY:
+
+- invoke OpenSpec CLI safely;
+- normalize CLI failures;
+- expose structured OpenSpec results;
+- enforce safe project/change paths;
+- preserve raw OpenSpec output;
+- emit domain middleware events.
+
+It MUST NOT:
+
+- implement OpenSpec schema semantics itself;
+- independently determine artifact dependencies;
+- decide which standard artifacts should exist;
+- implement artifact-generation orchestration;
+- generate specification prose;
+- make model calls;
+- become a generic process framework.
+
+---
+
+# 8. Verify Actual OpenSpec CLI Contract
+
+Do not guess OpenSpec commands or response fields.
+
+Before implementing the refactor, inspect the OpenSpec version/API available to this repository and verify the actual CLI behavior used for:
+
+- change creation;
+- change status;
+- artifact/change instructions;
 - validation;
-- schema discovery where required.
+- artifact paths;
+- artifact dependency/status information.
 
-Do NOT implement OpenSpec artifact dependency rules independently.
+Prefer machine-readable CLI output when available.
 
-Do NOT hardcode the assumption that every schema is exactly:
+If a required piece of information is genuinely unavailable from OpenSpec CLI, document that limitation and implement the smallest safe fallback.
 
-```text
-proposal → specs → design → tasks
+Any fallback MUST be isolated and explicitly identified as compatibility behavior rather than treated as canonical OpenSpec semantics.
+
+---
+
+# 9. Introduce ArtifactWriter Port
+
+Introduce a deliberately small filesystem-writing abstraction.
+
+For example:
+
+```ts
+export interface ArtifactWriter {
+  write(input: WriteArtifactInput): Promise<WriteArtifactResult>;
+}
 ```
 
-Use machine-readable OpenSpec CLI output wherever available.
+A reasonable input shape may contain:
 
-OpenSpec CLI remains authoritative for:
-
-- selected schema;
-- artifact graph;
-- dependencies;
-- instructions;
-- templates;
-- resolved artifact paths;
-- validation.
-
-### No lossy OpenSpec normalization
-
-The internal model may extend OpenSpec information but must never reduce OpenSpec into a narrower domain model.
-
-Preserve OpenSpec-defined information without semantic loss.
-
-An enriched context may conceptually contain:
-
-```text
-SpecContext
-├── OpenSpec context
-├── Interview context
-└── Review context
+```ts
+interface WriteArtifactInput {
+  projectRoot: string;
+  path: string;
+  content: string;
+}
 ```
 
-Do not fully design Interview/Review state in this step.
+Exact naming is flexible.
+
+The abstraction should express one capability:
+
+> persist generated artifact content to a resolved project-relative path.
+
+Nothing more.
 
 ---
 
-## 5. Keep ProcessRunner as infrastructure
+# 10. Filesystem ArtifactWriter
 
-Retain a generic process execution abstraction.
+Provide the default Node filesystem implementation.
 
-It must:
-
-- accept executable and arguments separately;
-- support working directory;
-- expose stdout/stderr/exit code;
-- support timeout if already implemented or inexpensive to retain;
-- avoid shell-string construction.
-
-The same abstraction should be reusable by OpenSpec CLI integration and future agent launchers.
-
-Do not turn ProcessRunner into a process framework.
-
----
-
-## 6. Reframe middleware
-
-Retain the existing middleware mechanism where useful:
-
-- Observer;
-- Policy;
-- Transformer;
-- deterministic ordering;
-- appropriate failure semantics.
-
-Remove generic AI control-plane event vocabulary.
-
-The EventBus should operate on **Specifier domain events**.
-
-Do not finalize a huge event taxonomy yet.
-
-Introduce only events required by existing/new behavior and prepare the API for lifecycle concepts such as:
+For example:
 
 ```text
-interview.*
-openspec.*
-review.*
+ArtifactWriter
+    ↑
+NodeArtifactWriter
 ```
 
-Remove obsolete concepts such as:
+The implementation must:
+
+- resolve paths relative to `projectRoot`;
+- reject path traversal outside `projectRoot`;
+- reject malformed/unsafe paths;
+- create required parent directories when appropriate;
+- write UTF-8 text;
+- return a small normalized result.
+
+Use Node filesystem APIs directly.
+
+Do not introduce a filesystem framework or dependency.
+
+---
+
+# 11. ArtifactWriter Must Not Understand OpenSpec
+
+This boundary is intentionally generic.
+
+Bad:
+
+```ts
+writer.writeProposal(...)
+writer.writeDesign(...)
+writer.writeTasks(...)
+```
+
+Good:
+
+```ts
+writer.write({
+  projectRoot,
+  path,
+  content,
+});
+```
+
+The writer must not know:
+
+- OpenSpec artifact names;
+- OpenSpec schemas;
+- dependency ordering;
+- interview state;
+- models;
+- prompts;
+- review logic.
+
+OpenSpec/Core decides **what and where**.
+
+ArtifactWriter only performs **safe persistence**.
+
+---
+
+# 12. Overwrite Semantics
+
+Do not silently overwrite existing artifacts by accident.
+
+Define explicit behavior.
+
+Recommended API:
+
+```ts
+interface WriteArtifactInput {
+  projectRoot: string;
+  path: string;
+  content: string;
+  overwrite?: boolean;
+}
+```
+
+Default:
 
 ```text
-model.route.*
-task.classify.*
-tool.execute.*
+overwrite = false
 ```
 
-Technical model-call observability should not masquerade as Specifier domain behavior.
+If the file exists and overwrite is false, return/throw a typed conflict result.
 
-### Architectural invariant
+Future review/regeneration workflows will be able to explicitly request replacement.
 
-Core owns required product behavior.
-
-Middleware owns optional cross-cutting behavior that observes or influences lifecycle events.
-
-Utilities are not automatically middleware.
+Do not introduce versioning, backups, snapshots or transactions in this step.
 
 ---
 
-## 7. Remove audit subsystem
+# 13. Atomicity
 
-The product does not currently require an audit subsystem.
+Use the simplest reliable filesystem behavior appropriate for text artifacts.
 
-Remove the dedicated in-memory audit architecture/examples unless some tiny reusable component is genuinely useful.
+If an atomic temp-file + rename implementation can be added cleanly and cheaply, prefer it.
 
-Do not build:
+However, do not build a transactional filesystem subsystem.
 
-- immutable audit storage;
-- audit sinks;
-- retention;
-- audit persistence.
-
-Instead, provide a thin optional logging Observer middleware.
-
-Logging may support:
-
-- debug;
-- info;
-- warn;
-- error.
-
-Actual interview decisions/provenance will later belong to domain state, not an audit log.
-
----
-
-## 8. Add thin default middleware
-
-Provide a very small bundled middleware set.
-
-### LoggingObserver
-
-Optional lifecycle logging.
-
-Core must work correctly without it.
-
-### LimitsGuard
-
-Implement only cheap deterministic guardrails.
-
-Possible configurable limits:
-
-- maximum interview turns;
-- maximum review iterations;
-- context-size warning threshold;
-- artifact-size warning threshold.
-
-Prefer warnings over hard stops except for obvious runaway conditions.
-
-Do NOT implement:
-
-- provider price discovery;
-- billing;
-- budget accounting;
-- dynamic model routing;
-- cost optimization;
-- provider adapters for FinOps.
-
-Those belong to a future external tool/service.
-
-Keep bundled middleware intentionally small.
-
----
-
-## 9. Clean shared types
-
-Inspect the current global `src/types.ts`.
-
-Move surviving types to the module/domain that owns them.
-
-Delete obsolete generic control-plane types.
-
-Do not replace it with another dumping ground such as `shared/types.ts`.
-
-Do not prematurely reorganize the entire source tree merely for aesthetics.
-
----
-
-## 10. Repository hygiene
-
-Remove committed IDE-specific files such as `.idea/` if they are local development artifacts and ensure they are ignored.
-
-Inspect `task.md`.
-
-If it represents obsolete implementation direction, remove it or replace it with current project guidance rather than leaving contradictory instructions for agents.
-
-Clean obsolete docs/examples/tests together with the architecture they describe.
-
----
-
-## 11. Agent engineering baseline
-
-Add a root `AGENTS.md` as the canonical engineering contract.
-
-It must clearly state:
-
-- product purpose;
-- OpenSpec-first architecture;
-- OpenSpec must not be reimplemented;
-- internal state may enrich but not narrow OpenSpec;
-- required Core vs optional middleware boundary;
-- model routing is outside this product;
-- LiteLLM is the v1 provider abstraction;
-- heavy FinOps belongs outside this product;
-- semantic domain events;
-- avoid speculative abstractions.
-
-Add thin agent-specific guidance where appropriate.
-
-Preserve existing TOML configuration. Do not delete it.
-
-Before adding Claude/Codex skills, inspect existing OpenSpec-generated agent skills/instructions and avoid duplicating functionality OpenSpec already provides.
-
-Skills should represent operational workflows, not module documentation.
-
----
-
-## 12. CI
-
-Add or normalize scripts:
+The hierarchy is:
 
 ```text
-typecheck
-test
-check
+safe > simple > sophisticated
 ```
 
-`check` should run the complete local quality gate.
+---
 
-Add GitHub Actions CI for:
+# 14. Domain Events
 
-- pull requests;
-- pushes to `main`.
+Artifact writing should expose semantic middleware extension points.
 
-Use a supported Node LTS version and reproducible dependency installation.
+Add only the events that are useful at the domain boundary, such as:
 
-CI must not require:
+```text
+artifact.write.before
+artifact.write.after
+```
 
-- real LLM credentials;
-- a running LiteLLM instance;
-- paid external API calls.
+Do not add events for:
 
-Mock infrastructure boundaries in tests.
+```text
+file.open
+file.chunk.write
+directory.create
+filesystem.rename
+```
 
-Where OpenSpec CLI integration tests require the actual CLI, choose an explicit deterministic strategy and document it.
+Middleware observes semantic actions, not implementation details.
+
+The `before` event must allow existing policy middleware such as limits/guards to deny or require human intervention before persistence occurs.
 
 ---
 
-## 13. README
+# 15. Keep Middleware Thin
 
-Create/update README to explain:
+Do not expand middleware architecture in this specification.
 
-- what the product actually is;
-- that it is OpenSpec-based;
-- current development status;
-- Core vs middleware vs infrastructure;
-- LiteLLM role;
-- development commands;
-- high-level intended workflow.
+Existing thin bundled middleware remains appropriate:
 
-Do not market unfinished functionality as complete.
+- logging observer;
+- simple limits guard.
+
+The new artifact-write events should merely participate in the existing extension mechanism.
+
+Do not implement:
+
+- tracing backend;
+- telemetry platform;
+- event persistence;
+- message broker;
+- plugin discovery;
+- event replay;
+- workflow engine.
 
 ---
 
-## Definition of Done
+# 16. Keep ModelPort and LiteLLM Thin
 
-- Current useful infrastructure has been preserved rather than blindly rewritten.
-- Static model routing is no longer part of production architecture.
-- Provider resolution/routing complexity has been removed.
-- Model invocation has a small `ModelPort`.
-- LiteLLM integration is thin.
-- OpenSpec integration is moving toward a CLI-backed `OpenSpecGateway`.
-- OpenSpec information is not lossily normalized.
-- Middleware uses Specifier domain semantics.
-- Dedicated audit subsystem is gone.
-- Thin logging and deterministic limits middleware exist.
-- ProcessRunner remains generic and safe.
-- Obsolete shared types/docs/examples/tests are cleaned.
-- IDE artifacts are not committed.
-- AGENTS.md reflects the new product.
-- Existing TOML is preserved.
-- CI exists and is green.
-- `npm run check` passes.
-- No Interview Engine is implemented yet beyond abstractions strictly necessary for this cleanup.
+Do not redesign `ModelPort`.
 
-## Non-goals
+Do not expand `LiteLLMModelAdapter`.
 
-Do NOT implement yet:
+The existing architecture:
 
-- full interactive interview engine;
-- question planning;
-- contradiction analysis;
-- full artifact generation loop;
-- autonomous coding agents;
-- generic workflow engine;
+```text
+Core
+  ↓
+ModelPort
+  ↓
+LiteLLMModelAdapter
+  ↓
+LiteLLM
+```
+
+is sufficient.
+
+Do not add:
+
 - model router;
-- provider-selection system;
-- full FinOps;
-- persistent database;
-- web UI;
-- queue infrastructure.
+- semantic tiers;
+- provider resolver;
+- provider SDK adapters;
+- retry orchestration;
+- fallback chains;
+- cost optimizer.
 
-Keep this step focused on making the repository an honest foundation for the next implementation.
+Those belong outside this product if they become necessary.
+
+---
+
+# 17. Structured Model Output — Small Shared Utility
+
+The current `ModelQuestionPlanner` contains local logic for extracting/parsing JSON from model output.
+
+Step 03 will introduce at least one more structured model consumer: specification review.
+
+Avoid duplicating this parser.
+
+Extract the smallest useful shared utility for structured JSON model responses.
+
+For example:
+
+```ts
+parseModelJson(...)
+```
+
+or equivalent.
+
+It may:
+
+- accept plain JSON;
+- tolerate surrounding Markdown/code-fence noise if currently necessary;
+- reject malformed output clearly.
+
+If the project already has a lightweight schema-validation mechanism, reuse it.
+
+Otherwise do NOT introduce a large validation framework solely for this.
+
+This is a utility, not a model-output subsystem.
+
+Update `ModelQuestionPlanner` to use it.
+
+---
+
+# 18. Contradiction Detection
+
+Do not build semantic contradiction analysis in this step.
+
+The current deterministic contradiction handling may remain as a cheap guard.
+
+Its limitation should be documented:
+
+> deterministic contradiction detection only catches directly comparable previously collected answers; semantic contradictions across different facts are expected to be detected by later model-assisted review.
+
+Do not introduce embeddings, semantic parsers, classifiers or extra model calls here.
+
+---
+
+# 19. Interview Core
+
+Do not redesign the working interview state model.
+
+Preserve concepts such as:
+
+- facts;
+- provenance;
+- assumptions;
+- choices;
+- questions;
+- unresolved questions;
+- contradictions;
+- readiness.
+
+Only adapt its OpenSpec-facing types as required by the generic OpenSpec artifact model.
+
+The Interview Engine must continue to consume OpenSpec context without needing to understand hardcoded standard artifact names.
+
+---
+
+# 20. No Artifact Generation Yet
+
+This specification creates the boundary needed by Step 03.
+
+It MUST NOT yet implement:
+
+```text
+Interview READY
+→ generate proposal
+→ generate specs
+→ generate design
+→ generate tasks
+→ review
+→ regenerate
+```
+
+Specifically do not add:
+
+- `ArtifactGenerator`;
+- `SpecReviewer`;
+- generation prompts;
+- review prompts;
+- regeneration loops;
+- artifact orchestration;
+- automatic transition from interview readiness into generation.
+
+Those belong to the next implementation specification.
+
+---
+
+# 21. Tests
+
+Add/update tests covering at minimum:
+
+### OpenSpec integration
+
+- gateway uses verified OpenSpec CLI commands;
+- generic artifact information is preserved;
+- custom/non-standard artifact names do not break normalization;
+- raw structured OpenSpec information is retained where designed;
+- path safety remains enforced;
+- CLI unavailable/failure behavior remains normalized;
+- validation behavior remains intact.
+
+### ArtifactWriter
+
+- writes a UTF-8 artifact;
+- creates necessary parent directory;
+- rejects path traversal;
+- does not overwrite by default;
+- overwrites only when explicitly allowed;
+- emits before/after middleware events;
+- middleware deny prevents the write;
+- middleware require-human prevents the write.
+
+### Structured model utility
+
+- parses valid JSON;
+- handles currently supported wrapper/noise format;
+- rejects invalid model output;
+- `ModelQuestionPlanner` uses the shared implementation.
+
+### Regression
+
+Existing interview tests must remain green.
+
+Existing model adapter tests must remain green.
+
+Existing middleware tests must remain green.
+
+---
+
+# 22. Documentation
+
+Update relevant documentation to clearly state the authority boundaries.
+
+The architecture documentation should communicate:
+
+```text
+OpenSpec
+  = specification schema/artifact authority
+
+Interview Core
+  = elicitation and readiness
+
+ModelPort
+  = generic model invocation boundary
+
+ArtifactWriter
+  = generic safe persistence boundary
+
+Middleware
+  = optional semantic extension/guard mechanism
+```
+
+Explicitly document that this project does not own OpenSpec artifact semantics.
+
+Document the ArtifactWriter as infrastructure rather than specification-domain logic.
+
+---
+
+# 23. Public Exports
+
+Expose only useful public boundaries from `src/index.ts`.
+
+Likely public APIs include:
+
+```text
+InterviewEngine
+QuestionPlanner
+ModelPort
+OpenSpecGateway
+ArtifactWriter
+```
+
+plus default implementations where appropriate.
+
+Avoid exporting internal parsing helpers merely because they exist.
+
+---
+
+# 24. Cleanup
+
+While implementing this specification, remove obsolete code/docs/tests that still describe the previous architecture.
+
+Specifically search for stale concepts such as:
+
+```text
+StaticModelRouter
+semantic model tiers
+provider resolver
+ModelExecutor
+audit subsystem
+control plane
+budget policy
+hardcoded proposal/design/tasks assumptions
+```
+
+Do not delete historical implementation specifications under `spec/` merely because they describe completed work unless repository convention explicitly treats them as temporary files.
+
+Do remove runtime/documentation references that incorrectly present obsolete concepts as current architecture.
+
+---
+
+# Non-goals
+
+This specification does NOT implement:
+
+- CLI user interface;
+- skill facade;
+- pipe mode;
+- artifact generation;
+- artifact review;
+- regeneration;
+- automatic interview resume after review;
+- model routing;
+- FinOps;
+- semantic parsing subsystem;
+- semantic contradiction engine;
+- persistent sessions;
+- database;
+- web API;
+- UI;
+- autonomous agent;
+- generic workflow engine.
+
+---
+
+# Expected Architecture After Completion
+
+```text
+                 ┌──────────────────┐
+                 │     OpenSpec     │
+                 │ CLI + schemas    │
+                 └────────┬─────────┘
+                          │
+                 authoritative data
+                          │
+                          ▼
+                ┌───────────────────┐
+                │  OpenSpecGateway  │
+                └─────────┬─────────┘
+                          │
+                          ▼
+                ┌───────────────────┐
+                │  Interview Core   │
+                │                   │
+                │ facts             │
+                │ assumptions       │
+                │ choices           │
+                │ gaps              │
+                │ contradictions    │
+                │ readiness         │
+                └──────┬─────┬──────┘
+                       │     │
+             model use │     │ future generated
+                       ▼     │ artifact
+                 ┌─────────┐ │
+                 │ModelPort│ │
+                 └────┬────┘ │
+                      │      ▼
+                ┌─────▼──┐ ┌──────────────┐
+                │LiteLLM │ │ArtifactWriter│
+                └────────┘ └──────┬───────┘
+                                  │
+                                  ▼
+                              filesystem
+
+MiddlewareBus surrounds semantic boundaries as an optional
+extension/guard mechanism.
+```
+
+---
+
+# Definition of Done
+
+This specification is complete when:
+
+1. OpenSpec CLI is the authoritative source for artifact/schema/status/instruction information wherever supported.
+2. Core no longer depends on hardcoded `proposal/design/tasks/specs` semantics.
+3. Useful OpenSpec information is not discarded merely because Core does not currently understand it.
+4. Manual OpenSpec metadata parsing is removed where redundant.
+5. Any unavoidable compatibility fallback is isolated and documented.
+6. A minimal generic `ArtifactWriter` port exists.
+7. A safe Node filesystem implementation exists.
+8. Existing files are not overwritten unless explicitly requested.
+9. Artifact writes participate in semantic middleware before/after events.
+10. Structured model JSON parsing is factored into a small reusable utility.
+11. Interview behavior remains functional.
+12. LiteLLM remains a thin `ModelPort` implementation.
+13. No artifact generation or review workflow has been implemented yet.
+14. Tests cover the new boundaries and regressions.
+15. Documentation reflects the resulting architecture.
+16. `npm run check` passes.
+17. CI remains green.
+
+## Final implementation principle
+
+When choosing between:
+
+> reproducing OpenSpec behavior inside this repository
+
+and
+
+> asking OpenSpec for the information and consuming it generically
+
+choose the second.
+
+When choosing between:
+
+> adding another subsystem
+
+and
+
+> adding a small port/helper/middleware
+
+prefer the smallest abstraction that preserves future extensibility.

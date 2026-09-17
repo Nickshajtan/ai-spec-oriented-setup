@@ -31,6 +31,8 @@ Answers create explicit user facts. If a new answer conflicts with an existing a
 
 When the human answers that follow-up, the contradiction is marked resolved and superseded facts remain linked for provenance.
 
+Current deterministic contradiction detection only catches directly comparable previously collected answers for the same material gap. Semantic contradictions across different facts are expected to be detected by later model-assisted review.
+
 ## Events
 
 The implemented lifecycle emits:

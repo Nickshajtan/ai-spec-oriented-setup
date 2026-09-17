@@ -8,9 +8,12 @@ The gateway enriches OpenSpec information for Specifier runtime use, but it must
 
 The gateway expects `openspec` on `PATH` unless a custom command is passed. Commands are executed through `ProcessRunner` with executable and arguments separated; shell command strings are not constructed.
 
-Validation command:
+Verified with OpenSpec CLI `1.12.0`, the gateway uses:
 
 ```text
+openspec new change <change-name> --json
+openspec status --change <change-name> --json
+openspec instructions --change <change-name> --json
 openspec validate <change-name> --json --no-interactive
 ```
 
@@ -25,14 +28,30 @@ const result = await gateway.validate({
   changeName: "add-health-check",
 });
 
-if (result.status === "valid") {
-  console.log(result.context?.openspec.artifacts.proposal?.path);
+if (result.status === "status-read") {
+  console.log(result.context?.openspec.artifacts);
 }
 ```
 
 ## Context Shape
 
-`SpecContext` keeps OpenSpec context under `context.openspec` and leaves room for later `interview` and `review` enrichment. Metadata preserves raw `.openspec.yaml` text and exposes a small `known` convenience view. CLI JSON output is carried without semantic narrowing.
+`SpecContext` keeps OpenSpec context under `context.openspec` and leaves room for later `interview` and `review` enrichment. CLI JSON output is preserved as `raw` alongside generic normalized fields.
+
+Artifacts are represented generically:
+
+```ts
+{
+  id: "capability-brief",
+  path: "openspec/changes/example/capability.md",
+  status: "missing",
+  dependencies: ["context-note"],
+  instructions: {},
+  metadata: {},
+  raw: {}
+}
+```
+
+The gateway does not know that any particular schema must contain `proposal`, `design`, `tasks`, or `specs`.
 
 ## Supported Operations
 
@@ -43,7 +62,13 @@ Current gateway methods:
 - `getInstructions`
 - `validate`
 
-These methods are intentionally thin. If the OpenSpec CLI provides machine-readable output, prefer preserving that output over inventing local dependency rules.
+These methods are intentionally thin. If the OpenSpec CLI provides machine-readable output, preserve that output instead of inventing local dependency rules.
+
+## Compatibility Fallback
+
+The gateway still checks that `openspec/` exists and, for existing-change operations, that the requested change directory exists. This is path safety and command hygiene, not schema interpretation.
+
+The bundled fixture contains legacy `.openspec.yaml` metadata with `schema: "1.0.0"`. OpenSpec CLI `1.12.0` reports that schema as unknown for `status` and `instructions`, even with a schema flag. Tests therefore mock those JSON responses when verifying generic artifact normalization. Validation remains covered against the real CLI.
 
 ## Middleware Events
 

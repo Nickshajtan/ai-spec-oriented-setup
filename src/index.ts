@@ -1,5 +1,6 @@
 export { MiddlewareBus } from "./bus.ts";
 export { SPECIFIER_EVENT_NAMES, specifierEvent } from "./events.ts";
+export { NodeArtifactWriter } from "./artifact-writer/node-artifact-writer.ts";
 export { InterviewEngine } from "./interview/interview-engine.ts";
 export { ModelQuestionPlanner } from "./interview/model-question-planner.ts";
 export { createLimitWarnings, createLimitsGuard } from "./middleware/limits-guard.ts";
@@ -10,6 +11,8 @@ export { CliOpenSpecGateway } from "./openspec/openspec-gateway.ts";
 export { NodeProcessRunner } from "./process-runner.ts";
 
 export type { SpecifierEvent, SpecifierEventName } from "./events.ts";
+export type { NodeArtifactWriterOptions } from "./artifact-writer/node-artifact-writer.ts";
+export type { ArtifactWriter, WriteArtifactInput, WriteArtifactResult, WriteArtifactStatus } from "./artifact-writer/types.ts";
 export type { InterviewEngineOptions } from "./interview/interview-engine.ts";
 export type { ModelQuestionPlannerConfig } from "./interview/model-question-planner.ts";
 export type {
@@ -60,14 +63,16 @@ export type {
   ModelResponse,
 } from "./model/types.ts";
 export type {
-  OpenSpecArtifactRef,
+  OpenSpecArtifact,
   OpenSpecChangeInput,
+  OpenSpecCommandResult,
   OpenSpecCreateChangeInput,
   OpenSpecGateway,
   OpenSpecGatewayError,
   OpenSpecGatewayResult,
   OpenSpecGatewayStatus,
-  OpenSpecMetadata,
+  OpenSpecInstructions,
+  OpenSpecStatus,
   OpenSpecValidation,
   SpecContext,
 } from "./openspec/types.ts";

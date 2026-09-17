@@ -7,6 +7,8 @@ export const SPECIFIER_EVENT_NAMES = [
   "interview.answer.accepted",
   "interview.gap.detected",
   "interview.ready",
+  "artifact.write.before",
+  "artifact.write.after",
   "openspec.change.create.before",
   "openspec.change.create.after",
   "openspec.status.before",

@@ -11,6 +11,7 @@ This is an engineering foundation, not a complete assistant yet. The repository 
 - a safe process runner for CLI integration;
 - a Specifier domain middleware bus for optional lifecycle observers, policies, and transformers;
 - a thin OpenSpec CLI gateway;
+- a generic safe `ArtifactWriter` filesystem boundary;
 - a minimal provider-neutral `ModelPort`;
 - a thin LiteLLM adapter for model completion;
 - a first vertical slice of the OpenSpec-aware interview core.
@@ -25,9 +26,12 @@ Core behavior belongs in the Specifier core. Middleware is optional cross-cuttin
 
 LiteLLM is the v1 provider abstraction for model calls. Model routing, provider selection, pricing, dynamic FinOps, retry orchestration, and model scoring are outside this product.
 
+Artifact persistence is deliberately generic. OpenSpec/Core decide what artifact path should be written; `ArtifactWriter` only performs safe UTF-8 persistence to a project-relative path.
+
 ## Main Modules
 
 - `src/openspec/openspec-gateway.ts` wraps the official OpenSpec CLI through `ProcessRunner`.
+- `src/artifact-writer/node-artifact-writer.ts` safely writes generated artifact content to the filesystem.
 - `src/interview/interview-engine.ts` manages interview session state and answer integration.
 - `src/interview/model-question-planner.ts` uses `ModelPort` to plan one material next question at a time.
 - `src/model/litellm-model-adapter.ts` maps `ModelRequest` to LiteLLM `/v1/chat/completions`.
@@ -51,8 +55,9 @@ npm run check
 1. The assistant gathers missing implementation details through an interview.
 2. It enriches, but does not replace, OpenSpec context.
 3. It asks OpenSpec to create and validate native changes.
-4. It runs a mandatory model-backed review through `ModelPort`.
-5. Optional middleware can log lifecycle activity or enforce deterministic local limits.
+4. Future generation writes OpenSpec-selected artifact paths through `ArtifactWriter`.
+5. It runs a mandatory model-backed review through `ModelPort`.
+6. Optional middleware can log lifecycle activity or enforce deterministic local limits.
 
 ## Programmatic Interview API
 
