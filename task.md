@@ -1,20 +1,29 @@
-# Task: Implement the first OpenSpec integration bridge
+# Task: Implement the first stateless model execution layer
 
 ## Context
 
-The repository already contains a minimal vendor-neutral middleware kernel.
+The repository already contains:
 
-Do not redesign or expand that kernel unless strictly necessary.
+1. a vendor-neutral middleware kernel;
+2. an OpenSpec adapter;
+3. a static semantic model router;
+4. a LiteLLM-backed provider resolution layer.
 
-This task adds the first real integration on top of it:
+The current flow can produce:
 
-> Read an OpenSpec change from a consumer repository, normalize its metadata/state, validate it through the official OpenSpec CLI, and emit semantic middleware events.
+```text
+OpenSpec / task metadata
+→ logical model tier
+→ resolved LiteLLM deployment
+```
 
-This is an adapter.
+This task adds the first real model execution step:
 
-It is NOT an OpenSpec replacement.
+> Execute one stateless model request through the resolved LiteLLM deployment and normalize the result.
 
-It must not reimplement OpenSpec parsing/validation rules that OpenSpec itself already owns.
+This is NOT an agent framework.
+
+Do not add tool calling, loops, autonomous task execution, Codex/Claude harness integration, or repository modification.
 
 ---
 
@@ -23,414 +32,605 @@ It must not reimplement OpenSpec parsing/validation rules that OpenSpec itself a
 Given:
 
 ```text
-/path/to/project
-openspec/changes/<change-name>/
+ProviderResolutionResult
++
+ModelRequest
 ```
 
-the control-plane library should be able to:
+execute exactly one request through LiteLLM and return a normalized result.
 
-1. locate the requested OpenSpec change;
-2. invoke official OpenSpec validation;
-3. read minimal relevant metadata/artifacts;
-4. normalize them into an internal `SpecContext`;
-5. emit semantic middleware events;
-6. return a structured result.
+Conceptual flow:
 
-No AI model execution yet.
+```text
+ModelRequest
+   ↓
+model.request.before
+   ↓
+middleware
+   ↓
+resolved deployment
+   ↓
+LiteLLM
+   ↓
+model response
+   ↓
+normalize
+   ↓
+model.request.after
+   ↓
+middleware
+   ↓
+ModelExecutionResult
+```
 
 ---
 
-# 1. Architectural boundary
+# 1. Model executor boundary
 
-The adapter must treat OpenSpec as an external system.
-
-OpenSpec owns:
-
-* spec format;
-* change layout;
-* validation rules;
-* lifecycle;
-* archive behavior;
-* task representation.
-
-Our control plane owns:
-
-* normalized execution context;
-* semantic events;
-* middleware decisions;
-* future policy/routing integration.
-
-Do not duplicate OpenSpec behavior.
-
----
-
-# 2. Adapter API
-
-Introduce a small adapter interface conceptually similar to:
-
-```ts
-interface SpecAdapter {
-  inspect(input: SpecInspectInput): Promise<SpecInspectionResult>;
-}
-```
-
-OpenSpec implementation:
-
-```ts
-class OpenSpecAdapter implements SpecAdapter
-```
-
-Input should contain only what is needed, for example:
-
-```ts
-interface SpecInspectInput {
-  projectRoot: string;
-  changeName: string;
-}
-```
-
-Do not make the adapter depend on the current process working directory.
-
----
-
-# 3. Normalized SpecContext
-
-Create a provider-neutral representation.
+Introduce a provider-neutral interface.
 
 Conceptually:
 
 ```ts
-interface SpecContext {
-  system: "openspec";
-
-  changeName: string;
-  projectRoot: string;
-
-  metadata?: {
-    schema?: string;
-    created?: string;
-    goal?: string;
-    affectedAreas?: string[];
-    skipSpecs?: boolean;
-  };
-
-  artifacts: {
-    proposal?: ArtifactRef;
-    design?: ArtifactRef;
-    tasks?: ArtifactRef;
-    specs: ArtifactRef[];
-  };
-
-  validation: {
-    valid: boolean;
-    exitCode: number;
-    findings?: unknown[];
-  };
-
-  taskProgress?: {
-    completed: number;
-    total: number;
-  };
+interface ModelExecutor {
+  execute(
+    request: ModelExecutionRequest
+  ): Promise<ModelExecutionOutcome>;
 }
 ```
 
-Adapt this to the actual language and existing contracts.
-
-Do not parse arbitrary prose into semantic meaning yet.
-
-For example, do NOT infer:
-
-* risk level;
-* architecture complexity;
-* model tier;
-* security category.
-
-Those belong to future layers.
+Do not expose LiteLLM-specific response objects outside the integration layer.
 
 ---
 
-# 4. OpenSpec metadata
+# 2. Execution request
 
-Read `.openspec.yaml` when present.
+Create a minimal normalized request model.
 
-Support only currently documented metadata needed for the normalized context:
+Conceptually:
+
+```ts
+interface ModelExecutionRequest {
+  runId: string;
+  taskId: string;
+
+  deployment: string;
+
+  messages: Array<{
+    role: "system" | "user" | "assistant";
+    content: string;
+  }>;
+
+  parameters?: {
+    temperature?: number;
+    maxTokens?: number;
+  };
+
+  metadata?: Record<string, unknown>;
+}
+```
+
+Keep it small.
+
+Do not yet add:
+
+* tool definitions;
+* response schemas;
+* multimodal content;
+* streaming;
+* reasoning controls;
+* provider-specific options.
+
+Those are future work.
+
+---
+
+# 3. Deployment source
+
+The executor must consume the already resolved deployment.
+
+Do not perform semantic routing again.
+
+Do not perform provider resolution again unless the existing architecture explicitly requires passing through a single orchestrated service boundary.
+
+Separation must remain:
 
 ```text
-schema
-created
-goal
-affected_areas
-skip_specs
+semantic router
+→ provider resolver
+→ model executor
 ```
-
-Ignore unknown keys.
-
-Do not implement OpenSpec's validation rules yourself.
-
-Invalid metadata should ultimately be reflected by the official OpenSpec validation/inspection result.
 
 ---
 
-# 5. Official CLI integration
+# 4. LiteLLM integration
 
-Use the official `openspec` CLI for validation.
+Use LiteLLM through the existing gateway/client abstraction.
 
-Expected command should be equivalent to:
+Prefer an OpenAI-compatible chat/completions-compatible endpoint exposed by LiteLLM Proxy.
 
-```bash
-openspec validate <change-name> --json --no-interactive
+Do not import Anthropic, AWS Bedrock, OpenAI, Gemini, or OpenRouter SDKs directly into core.
+
+The executor should know only:
+
+```text
+LiteLLM endpoint
+resolved deployment alias
+request
 ```
 
-or another official structured-output command if repository inspection proves more suitable.
+---
+
+# 5. Normalized response
+
+Return a provider-neutral result.
+
+Conceptually:
+
+```ts
+interface ModelExecutionResult {
+  content: string;
+
+  deployment: string;
+
+  provider?: string;
+  model?: string;
+
+  usage?: {
+    inputTokens?: number;
+    outputTokens?: number;
+    totalTokens?: number;
+  };
+
+  cost?: {
+    amountUsd?: number;
+    source?: string;
+  };
+
+  finishReason?: string;
+
+  latencyMs: number;
+
+  rawResponseId?: string;
+
+  metadata?: Record<string, unknown>;
+}
+```
+
+Do not expose secrets or raw authorization data.
+
+Preserving a small opaque `rawResponseId` is acceptable.
+
+Avoid leaking the full raw provider response throughout core unless needed for debugging behind an explicit integration boundary.
+
+---
+
+# 6. Execution outcome
+
+Model execution may succeed, halt due to middleware, or fail.
+
+Use an explicit result/outcome model rather than relying only on thrown exceptions.
+
+Conceptually:
+
+```ts
+type ModelExecutionOutcome =
+  | {
+      status: "completed";
+      result: ModelExecutionResult;
+    }
+  | {
+      status: "denied";
+      reason: string;
+    }
+  | {
+      status: "requires-human";
+      reason: string;
+    }
+  | {
+      status: "failed";
+      error: ModelExecutionError;
+    };
+```
+
+Reuse existing repository result conventions if present.
+
+---
+
+# 7. Semantic middleware events
+
+Use existing:
+
+```text
+model.request.before
+model.request.after
+```
+
+Expected behavior:
+
+## Before
+
+Middleware can:
+
+* observe;
+* deny;
+* require human;
+* transform explicitly allowed request fields.
+
+If denied or human approval is required:
+
+* no LiteLLM call occurs.
+
+## After
+
+Middleware receives normalized execution result/context.
+
+Do not introduce vendor-specific events.
+
+---
+
+# 8. Transformer behavior
+
+Transformer middleware may modify only explicitly allowed request data.
+
+Examples:
+
+```text
+messages
+temperature
+maxTokens
+metadata
+```
+
+It must NOT be able to inject:
+
+* API keys;
+* arbitrary LiteLLM base URLs;
+* unknown deployment identifiers;
+* raw provider credentials.
+
+Deployment changes belong to the provider resolution layer unless a clearly documented operational override already exists.
+
+---
+
+# 9. Policy behavior
+
+Policy middleware may:
+
+```text
+continue
+deny
+require-human
+```
+
+A deny before execution must guarantee zero model calls.
+
+A require-human result must also guarantee zero model calls.
+
+Document this as an invariant and test it.
+
+---
+
+# 10. Failure model
+
+Introduce typed model execution failures.
+
+At minimum distinguish:
+
+```text
+LiteLLMUnavailable
+RequestTimeout
+AuthenticationFailure
+RateLimited
+DeploymentUnavailable
+InvalidRequest
+InvalidResponse
+UpstreamProviderFailure
+UnknownExecutionFailure
+```
+
+Exact mapping depends on LiteLLM response/error semantics.
+
+Preserve:
+
+```text
+HTTP status where applicable
+safe upstream error code
+deployment
+retryability hint if reliably known
+```
+
+Do not expose secrets or authorization headers.
+
+---
+
+# 11. No retries yet
 
 Important:
 
-* never scrape human-readable terminal output when JSON is available;
-* capture stdout;
-* capture stderr;
-* capture exit code;
-* distinguish:
+Do NOT implement automatic retries or fallback execution in this step.
 
-  * CLI unavailable;
-  * project not initialized;
-  * change not found;
-  * change invalid;
-  * command execution failure.
+Why:
 
-Wrap these into typed adapter errors/results.
+The provider resolver already returns ordered fallback candidates, but execution retry/fallback policy is a separate concern.
 
-Do not hide the underlying reason.
+For now:
+
+```text
+one resolved deployment
+→ one request
+→ one result/failure
+```
+
+Keep the boundary clean.
 
 ---
 
-# 6. Middleware lifecycle
+# 12. Timeout
 
-Use the semantic middleware kernel.
-
-For inspection/validation emit:
-
-```text
-spec.validate.before
-spec.validate.after
-```
-
-Expected flow:
-
-```text
-load request
-   ↓
-spec.validate.before
-   ↓
-middleware
-   ↓
-OpenSpec CLI validation
-   ↓
-normalize result
-   ↓
-spec.validate.after
-   ↓
-middleware
-   ↓
-return SpecInspectionResult
-```
-
-The adapter must respect middleware results already supported by the kernel.
-
-For example:
-
-* policy deny before validation → do not run OpenSpec;
-* require-human → stop cleanly;
-* fail-closed middleware error → stop;
-* observer errors obey existing semantics.
-
-Do not add new middleware action types.
-
----
-
-# 7. Artifact discovery
-
-Discover only standard artifacts inside the requested change:
-
-```text
-proposal.md
-design.md
-tasks.md
-specs/**
-.openspec.yaml
-```
-
-Represent them as references.
-
-Do not load every file fully into memory unless necessary.
-
-Do not recursively inspect unrelated repository files.
-
-Path handling must prevent escaping the consumer project/change directory.
-
----
-
-# 8. Task progress
-
-If practical using official OpenSpec structured commands, expose simple task progress:
-
-```text
-completed / total
-```
-
-Prefer official OpenSpec output over manually interpreting task syntax.
-
-If official structured output cannot provide this cleanly, manual checkbox counting inside `tasks.md` is acceptable only as a small isolated fallback and must be documented.
-
-Do not build a task execution engine.
-
----
-
-# 9. Process runner abstraction
-
-Do not hard-wire process execution throughout the adapter.
-
-Create or reuse a tiny abstraction such as:
-
-```ts
-interface ProcessRunner {
-  run(command, args, options): Promise<ProcessResult>;
-}
-```
-
-This is primarily for testing.
-
-Do not build a generic shell framework.
+Support configurable request timeout.
 
 Requirements:
 
-* command + args separated;
-* no shell string concatenation;
-* configurable working directory;
-* timeout support if existing project conventions make this straightforward;
-* stdout/stderr/exit code captured.
+* explicit default;
+* configurable per executor/client configuration;
+* timeout produces typed failure;
+* do not allow indefinitely hanging requests.
+
+Do not implement sophisticated deadline propagation yet unless trivial.
 
 ---
 
-# 10. Security constraints
+# 13. Request validation
 
-Project root and change name are untrusted inputs.
+Validate before execution:
 
-Requirements:
+* non-empty deployment;
+* non-empty messages;
+* supported roles;
+* message content shape;
+* valid temperature if supplied;
+* positive maxTokens if supplied.
 
-* prevent path traversal;
-* do not interpolate them into shell strings;
-* do not execute content from OpenSpec markdown;
-* do not execute tasks from `tasks.md`;
-* do not follow arbitrary commands contained in artifacts.
-
-This adapter reads and validates specifications only.
+Invalid requests must fail before network execution.
 
 ---
 
-# 11. Tests
+# 14. Secret handling
 
-Tests are mandatory.
+Secrets must remain inside LiteLLM client configuration.
 
-Use temporary fixture repositories.
+They must not appear in:
 
-Cover at minimum:
+* middleware context;
+* model execution result;
+* audit logs;
+* exceptions;
+* test snapshots.
 
-## Valid change
+Redact sensitive HTTP headers from debug logging.
 
-Given a valid OpenSpec fixture:
+---
 
-* adapter finds it;
-* validation succeeds;
-* metadata is normalized;
-* artifacts are listed;
-* before/after events fire.
+# 15. Audit trail
 
-## Invalid change
+Reuse the existing audit infrastructure.
 
-* official validation failure returns `valid: false`;
-* reason/output remains inspectable;
-* `spec.validate.after` still fires where appropriate.
-
-## Missing change
-
-* typed failure/result;
-* no misleading "invalid spec" result.
-
-## OpenSpec CLI unavailable
-
-* distinct error;
-* actionable message.
-
-## Middleware deny
-
-At `spec.validate.before`:
-
-* validation command is not executed.
-
-## Middleware require-human
-
-* validation command is not executed;
-* result reflects halted execution.
-
-## Middleware ordering
-
-* existing kernel semantics are preserved.
-
-## Path traversal
-
-Inputs such as:
+Record at minimum:
 
 ```text
-../../something
+runId
+taskId
+deployment
+request start
+request end
+latency
+status
+provider/model if available
+token usage if available
+cost if available
+finish reason
+safe error category on failure
 ```
 
-must be rejected.
+Do NOT audit full prompts by default.
 
-## Metadata
-
-* known `.openspec.yaml` fields normalize correctly;
-* unknown fields do not break the adapter.
-
-## Optional artifacts
-
-* missing `design.md` is allowed;
-* adapter handles tooling/doc-only changes where specs may legitimately be absent.
+If prompt logging already exists as a configurable feature, it must remain opt-in.
 
 ---
 
-# 12. Integration fixture
+# 16. Cost/usage metadata
 
-Add one tiny sample OpenSpec project under tests/fixtures or equivalent.
+If LiteLLM returns usage/cost data in a structured way, normalize it.
 
-Do not turn it into production configuration.
+Do not calculate provider pricing tables manually in this task.
 
-Fixture should contain one simple change such as:
+Priority:
 
 ```text
-add-health-check
+actual gateway-reported usage/cost
+> absent/unknown
 ```
 
-with enough artifacts to demonstrate validation and normalization.
+Never invent cost values.
 
 ---
 
-# 13. Documentation
+# 17. Test gateway
 
-Add concise documentation:
+Normal tests must use a fake/mock LiteLLM-compatible endpoint/client.
+
+Cover:
+
+* successful completion;
+* timeout;
+* malformed response;
+* HTTP 401/403;
+* HTTP 429;
+* HTTP 5xx;
+* middleware deny;
+* middleware require-human;
+* transformer request modification;
+* audit output;
+* secret redaction.
+
+Do not make unit tests call paid models.
+
+---
+
+# 18. Success test
+
+Given:
 
 ```text
-docs/integrations/openspec.md
+deployment = coding-strong-primary
+
+messages:
+system: "You are a concise assistant."
+user: "Return exactly: pong"
+```
+
+mock gateway responds successfully.
+
+Expected:
+
+```text
+status = completed
+content = "pong"
+deployment preserved
+usage normalized if present
+latency recorded
+model.request.before emitted
+model.request.after emitted
+```
+
+---
+
+# 19. Middleware deny test
+
+At:
+
+```text
+model.request.before
+```
+
+Policy returns:
+
+```text
+deny
+```
+
+Expected:
+
+```text
+LiteLLM client call count = 0
+status = denied
+```
+
+---
+
+# 20. Transformer test
+
+Transformer changes:
+
+```text
+temperature
+```
+
+or appends allowed metadata.
+
+Expected:
+
+* transformed value is sent to LiteLLM;
+* original request object is not unexpectedly mutated if immutable semantics are used elsewhere.
+
+---
+
+# 21. Invalid response test
+
+LiteLLM returns HTTP success but malformed payload.
+
+Expected:
+
+```text
+InvalidResponse
+```
+
+Do not silently return empty content.
+
+---
+
+# 22. Optional real smoke test
+
+Add a separately enabled real integration test.
+
+Example toggle:
+
+```text
+RUN_LITELLM_EXECUTION_SMOKE=1
+```
+
+The smoke test should:
+
+1. use configured LiteLLM endpoint;
+2. use a configured cheap deployment;
+3. send a tiny request;
+4. verify a non-empty normalized response.
+
+Keep it cheap and explicitly opt-in.
+
+CI must not require paid API access.
+
+---
+
+# 23. First end-to-end integration test
+
+Add one integration test covering the existing layers:
+
+```text
+OpenSpec fixture
+   ↓
+normalized task/spec metadata
+   ↓
+StaticModelRouter
+   ↓
+logical tier
+   ↓
+ProviderResolver
+   ↓
+deployment
+   ↓
+ModelExecutor
+   ↓
+mock LiteLLM response
+```
+
+This is the first full vertical slice.
+
+Do not add agent execution.
+
+---
+
+# 24. Documentation
+
+Add concise documentation such as:
+
+```text
+docs/execution/model-executor.md
 ```
 
 Explain:
 
-* what the adapter does;
-* what it deliberately does not do;
-* runtime dependency on OpenSpec CLI;
-* example API call;
-* resulting normalized context;
-* middleware events emitted;
-* error behavior.
+* purpose;
+* request model;
+* normalized result;
+* middleware lifecycle;
+* LiteLLM boundary;
+* failure categories;
+* timeout;
+* secret handling;
+* why retries/fallbacks are deliberately deferred;
+* how to run optional smoke test.
 
 ---
 
@@ -438,34 +638,32 @@ Explain:
 
 Do NOT implement:
 
-* OpenSpec initialization;
-* OpenSpec proposal generation;
-* OpenSpec apply;
-* OpenSpec archive;
-* OpenSpec sync;
-* OpenSpec verification workflow;
-* model routing;
-* LiteLLM;
-* OpenRouter;
+* retry loops;
+* fallback execution;
+* streaming;
+* tool calling;
+* function calling;
+* structured output;
+* JSON schema enforcement;
+* agent loops;
+* repository file modification;
+* shell execution;
+* Claude Code invocation;
+* Codex CLI invocation;
+* Gemini CLI invocation;
+* Copilot CLI invocation;
+* context assembly from repository files;
+* prompt templates;
+* conversation memory;
 * Langfuse;
-* Claude/Codex adapters;
-* LLM calls;
-* task execution;
-* automatic spec modification;
-* parsing proposal prose into AI metadata;
-* autonomous workflow orchestration.
+* dynamic budgets;
+* parallel model calls;
+* model racing;
+* independent reviewer execution.
 
-Especially:
+This task answers only:
 
-Do not add:
-
-```text
-controlPlane.runFeature(...)
-```
-
-yet.
-
-This task only introduces the integration boundary.
+> Can the control plane execute one normalized stateless request against one resolved deployment and receive a safe normalized result?
 
 ---
 
@@ -473,36 +671,44 @@ This task only introduces the integration boundary.
 
 The task is complete when:
 
-1. A generic `SpecAdapter` boundary exists, or an equivalent minimal abstraction justified by the implementation.
-2. `OpenSpecAdapter` exists.
-3. Consumer repository root is supplied explicitly.
-4. OpenSpec validation uses the official CLI.
-5. Structured CLI output is preferred where available.
-6. `.openspec.yaml` known metadata is normalized.
-7. Standard change artifacts are represented.
-8. `spec.validate.before` is emitted.
-9. `spec.validate.after` is emitted.
-10. Existing middleware decisions are respected.
-11. No provider/model/agent integration is introduced.
-12. No OpenSpec validation logic is duplicated unnecessarily.
-13. Path traversal is prevented.
-14. Shell command injection is prevented.
-15. Process execution is testable without invoking a real shell in unit tests.
-16. Unit tests pass.
-17. At least one integration test runs against a real OpenSpec fixture if the CLI is available in CI/dev environment.
-18. Existing lint/type/test checks pass.
-19. Documentation exists.
-20. Final response reports:
+1. A provider-neutral `ModelExecutor` boundary exists.
+2. A normalized model request contract exists.
+3. A normalized model execution result exists.
+4. Execution uses the previously resolved deployment.
+5. LiteLLM remains the provider gateway boundary.
+6. No direct model-provider SDK is introduced into core.
+7. `model.request.before` executes before any network call.
+8. `model.request.after` executes after execution/normalization where appropriate.
+9. Policy deny guarantees zero network requests.
+10. Require-human guarantees zero network requests.
+11. Transformer middleware can modify explicitly allowed request fields.
+12. Request validation occurs before network execution.
+13. Request timeout exists.
+14. Typed failure categories exist.
+15. No automatic retry exists.
+16. No automatic fallback execution exists.
+17. Usage metadata is normalized when available.
+18. Cost metadata is normalized only when provided reliably.
+19. Audit records execution metadata without leaking secrets.
+20. Prompts are not logged by default.
+21. Mock LiteLLM unit/integration tests pass.
+22. First full vertical-slice integration test passes:
+    `OpenSpec → router → resolver → executor`.
+23. Optional real LiteLLM smoke test is documented.
+24. Existing lint/type/test checks pass.
+25. Documentation exists.
+26. Final response reports:
 
     * changed files;
-    * tests run;
-    * exact OpenSpec CLI commands relied upon;
-    * any OpenSpec assumptions made;
-    * architectural decisions;
-    * deliberately deferred work.
+    * executor API;
+    * LiteLLM endpoint/API assumptions;
+    * normalized response fields;
+    * error mappings;
+    * tests executed/results;
+    * anything deliberately deferred.
 
 ## Final instruction
 
-Do not implement routing, provider integration, orchestration, or AI execution.
+Do not continue into retries, fallback execution, agent harnesses, or tool calling.
 
-When this adapter can inspect and validate one OpenSpec change through the middleware kernel, stop.
+When the control plane can perform exactly one safe stateless model request end-to-end, stop.

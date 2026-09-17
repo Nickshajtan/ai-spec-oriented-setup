@@ -6,6 +6,8 @@ export const SEMANTIC_EVENT_NAMES = [
   "spec.validate.after",
   "model.route.before",
   "model.route.after",
+  "provider.resolve.before",
+  "provider.resolve.after",
   "model.request.before",
   "model.request.after",
   "tool.execute.before",

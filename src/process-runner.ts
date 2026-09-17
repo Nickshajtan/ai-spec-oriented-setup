@@ -1,4 +1,6 @@
-import { spawn } from "node:child_process";
+import { spawn, spawnSync } from "node:child_process";
+import { existsSync } from "node:fs";
+import path from "node:path";
 
 export interface ProcessRunOptions {
   cwd: string;
@@ -20,7 +22,8 @@ export interface ProcessRunner {
 export class NodeProcessRunner implements ProcessRunner {
   run(command: string, args: string[], options: ProcessRunOptions): Promise<ProcessResult> {
     return new Promise((resolve) => {
-      const child = spawn(command, args, {
+      const resolved = resolveWindowsNpmCli(command, args);
+      const child = spawn(resolved.command, resolved.args, {
         cwd: options.cwd,
         shell: false,
         windowsHide: true,
@@ -63,4 +66,27 @@ export class NodeProcessRunner implements ProcessRunner {
       });
     });
   }
+}
+
+function resolveWindowsNpmCli(command: string, args: string[]): { command: string; args: string[] } {
+  if (process.platform !== "win32" || command !== "openspec") {
+    return { command, args };
+  }
+
+  const located = spawnSync("where.exe", ["openspec.cmd"], { encoding: "utf8" });
+  const shimPath = located.stdout
+    .split(/\r?\n/)
+    .map((line) => line.trim())
+    .find(Boolean);
+
+  if (!shimPath) {
+    return { command, args };
+  }
+
+  const entrypoint = path.join(path.dirname(shimPath), "node_modules", "@fission-ai", "openspec", "bin", "openspec.js");
+  if (!existsSync(entrypoint)) {
+    return { command, args };
+  }
+
+  return { command: process.execPath, args: [entrypoint, ...args] };
 }
