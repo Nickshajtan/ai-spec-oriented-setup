@@ -1,14 +1,12 @@
-# OpenSpec Adapter
+# OpenSpec Gateway
 
-## Purpose
+`CliOpenSpecGateway` is a thin integration over the official OpenSpec CLI. OpenSpec remains authoritative for schema, artifact graph, artifact dependencies, templates, instructions, resolved paths, and validation.
 
-`OpenSpecAdapter` is the first integration bridge on top of the vendor-neutral middleware kernel. It inspects one OpenSpec change in a consumer repository, runs official OpenSpec CLI validation, normalizes a small amount of metadata and artifact references, emits semantic middleware events, and returns a structured result.
-
-This is an adapter, not an OpenSpec implementation.
+The gateway enriches OpenSpec information for Specifier runtime use, but it must not replace OpenSpec with a narrower internal artifact model.
 
 ## Runtime Dependency
 
-The adapter relies on the official OpenSpec CLI being available on `PATH` unless a custom command is passed.
+The gateway expects `openspec` on `PATH` unless a custom command is passed. Commands are executed through `ProcessRunner` with executable and arguments separated; shell command strings are not constructed.
 
 Validation command:
 
@@ -16,164 +14,54 @@ Validation command:
 openspec validate <change-name> --json --no-interactive
 ```
 
-The adapter passes command and arguments separately through `ProcessRunner`; it does not build shell command strings.
-
 ## API Example
 
 ```ts
-import { MiddlewareBus, OpenSpecAdapter } from "../src/index.ts";
+import { CliOpenSpecGateway } from "../src/index.ts";
 
-const bus = new MiddlewareBus();
-const adapter = new OpenSpecAdapter({ bus });
-
-const result = await adapter.inspect({
+const gateway = new CliOpenSpecGateway();
+const result = await gateway.validate({
   projectRoot: "/path/to/project",
   changeName: "add-health-check",
 });
 
 if (result.status === "valid") {
-  console.log(result.context?.artifacts.proposal?.path);
+  console.log(result.context?.openspec.artifacts.proposal?.path);
 }
 ```
 
-## Normalized Context
+## Context Shape
 
-Successful validation execution returns a provider-neutral `SpecContext`:
+`SpecContext` keeps OpenSpec context under `context.openspec` and leaves room for later `interview` and `review` enrichment. Metadata preserves raw `.openspec.yaml` text and exposes a small `known` convenience view. CLI JSON output is carried without semantic narrowing.
 
-```ts
-{
-  system: "openspec",
-  changeName: "add-health-check",
-  projectRoot: "/path/to/project",
-  metadata: {
-    schema: "1.0.0",
-    created: "2026-09-05",
-    goal: "Add a simple health check capability.",
-    affectedAreas: ["api", "ops"],
-    skipSpecs: false
-  },
-  artifacts: {
-    proposal: { kind: "proposal", path: "openspec/changes/add-health-check/proposal.md" },
-    design: { kind: "design", path: "openspec/changes/add-health-check/design.md" },
-    tasks: { kind: "tasks", path: "openspec/changes/add-health-check/tasks.md" },
-    metadata: { kind: "metadata", path: "openspec/changes/add-health-check/.openspec.yaml" },
-    specs: []
-  },
-  validation: {
-    valid: true,
-    exitCode: 0,
-    stdout: "...",
-    stderr: "..."
-  },
-  taskProgress: {
-    completed: 1,
-    total: 2
-  }
-}
-```
+## Supported Operations
 
-Only known `.openspec.yaml` fields are normalized:
+Current gateway methods:
 
-```text
-schema
-created
-goal
-affected_areas
-skip_specs
-```
+- `createChange`
+- `getStatus`
+- `getInstructions`
+- `validate`
 
-Unknown metadata fields are ignored. The adapter does not infer risk, complexity, model tier, or security category from prose.
+These methods are intentionally thin. If the OpenSpec CLI provides machine-readable output, prefer preserving that output over inventing local dependency rules.
 
 ## Middleware Events
 
-The adapter emits:
+The gateway emits Specifier domain events:
 
 ```text
-spec.validate.before
-spec.validate.after
+openspec.change.create.before
+openspec.change.create.after
+openspec.status.before
+openspec.status.after
+openspec.instructions.before
+openspec.instructions.after
+openspec.validate.before
+openspec.validate.after
 ```
 
-Flow:
+Middleware can observe, deny, require human input, or transform explicit lifecycle metadata. Core OpenSpec behavior does not depend on middleware being installed.
 
-```text
-inspect request
-  -> spec.validate.before
-  -> openspec validate <change-name> --json --no-interactive
-  -> normalize result
-  -> spec.validate.after
-  -> return result
-```
+## Integration Tests
 
-Middleware decisions are respected:
-
-```text
-deny before validation          -> CLI is not executed
-require-human before validation -> CLI is not executed
-deny after validation           -> result includes normalized context and halted status
-require-human after validation  -> result includes normalized context and halted status
-```
-
-## Error Behavior
-
-Structured result statuses:
-
-```text
-valid
-invalid
-missing-change
-project-not-initialized
-cli-unavailable
-command-failed
-middleware-denied
-requires-human
-path-rejected
-```
-
-`invalid` means the official OpenSpec validation command ran and returned a non-zero exit code. Missing changes, unavailable CLI, path traversal, and command execution failures are distinct statuses.
-
-## Artifact Discovery
-
-The adapter only discovers standard files inside the requested change:
-
-```text
-proposal.md
-design.md
-tasks.md
-.openspec.yaml
-specs/**
-```
-
-Artifacts are represented as references. Markdown content is not executed.
-
-Task progress uses isolated checkbox counting in `tasks.md` as a fallback because this adapter does not currently depend on an official structured task-progress command.
-
-## Security Boundary
-
-`projectRoot` and `changeName` are treated as untrusted input.
-
-The adapter:
-
-```text
-prevents path traversal
-uses command + args instead of shell strings
-does not execute markdown
-does not execute OpenSpec tasks
-does not follow commands contained in artifacts
-does not inspect unrelated repository files
-```
-
-## Deliberately Out Of Scope
-
-Do not add these here:
-
-```text
-OpenSpec initialization, apply, archive, sync, or generation
-model routing
-LiteLLM or OpenRouter
-Langfuse
-Claude/Codex/Gemini adapters
-LLM calls
-task execution
-automatic spec modification
-workflow orchestration
-```
+Unit tests mock the process runner. The optional real OpenSpec CLI fixture test runs only when `openspec` is available on `PATH`; otherwise it skips. CI therefore does not require installing OpenSpec.

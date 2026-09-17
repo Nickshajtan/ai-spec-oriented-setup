@@ -4,6 +4,8 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "test": "node --test --experimental-strip-types tests/*.test.ts"
+    "typecheck": "node scripts/typecheck.mjs",
+    "test": "node --test --experimental-strip-types tests/*.test.ts",
+    "check": "npm run typecheck && npm test"
   }
 }

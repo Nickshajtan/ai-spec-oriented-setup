@@ -1,31 +1,29 @@
-export const SEMANTIC_EVENT_NAMES = [
+export const SPECIFIER_EVENT_NAMES = [
   "run.started",
-  "task.classify.before",
-  "task.classify.after",
-  "spec.validate.before",
-  "spec.validate.after",
-  "model.route.before",
-  "model.route.after",
-  "provider.resolve.before",
-  "provider.resolve.after",
-  "model.request.before",
-  "model.request.after",
-  "tool.execute.before",
-  "tool.execute.after",
-  "verify.before",
-  "verify.after",
-  "run.complete.before",
+  "interview.turn.before",
+  "interview.turn.after",
+  "openspec.change.create.before",
+  "openspec.change.create.after",
+  "openspec.status.before",
+  "openspec.status.after",
+  "openspec.instructions.before",
+  "openspec.instructions.after",
+  "openspec.validate.before",
+  "openspec.validate.after",
+  "review.request.before",
+  "review.request.after",
+  "review.completed",
   "run.completed",
   "run.failed",
 ] as const;
 
-export type SemanticEventName = (typeof SEMANTIC_EVENT_NAMES)[number];
+export type SpecifierEventName = (typeof SPECIFIER_EVENT_NAMES)[number];
 
-export interface SemanticEvent {
-  name: SemanticEventName;
+export interface SpecifierEvent {
+  name: SpecifierEventName;
   version: 1;
 }
 
-export function semanticEvent(name: SemanticEventName): SemanticEvent {
+export function specifierEvent(name: SpecifierEventName): SpecifierEvent {
   return { name, version: 1 };
 }

@@ -1,30 +1,24 @@
-import { semanticEvent, type SemanticEventName } from "./events.ts";
+import { specifierEvent, type SpecifierEventName } from "./events.ts";
 import type {
-  AuditRecord,
-  AuditSink,
   ContextPatch,
   Middleware,
   MiddlewareAction,
   MiddlewareContext,
   MiddlewareExecution,
+  MiddlewareRecord,
   MiddlewareResult,
   MiddlewareType,
-} from "./types.ts";
+} from "./middleware/types.ts";
 
 type RegisteredMiddleware = Middleware & { registrationOrder: number };
 
 const PHASE_ORDER: MiddlewareType[] = ["observer", "policy", "transformer"];
 
 export class MiddlewareBus {
-  private readonly registry = new Map<SemanticEventName, RegisteredMiddleware[]>();
+  private readonly registry = new Map<SpecifierEventName, RegisteredMiddleware[]>();
   private nextRegistrationOrder = 0;
-  private readonly auditSink?: AuditSink;
 
-  constructor(auditSink?: AuditSink) {
-    this.auditSink = auditSink;
-  }
-
-  use(eventName: SemanticEventName, middleware: Middleware): void {
+  use(eventName: SpecifierEventName, middleware: Middleware): void {
     const existing = this.registry.get(eventName) ?? [];
     if (existing.some((registered) => registered.id === middleware.id)) {
       throw new Error(`Middleware id already registered for ${eventName}: ${middleware.id}`);
@@ -37,17 +31,17 @@ export class MiddlewareBus {
     this.registry.set(eventName, existing);
   }
 
-  getMiddleware(eventName: SemanticEventName): Middleware[] {
+  getMiddleware(eventName: SpecifierEventName): Middleware[] {
     return this.getOrdered(eventName).map(({ registrationOrder: _registrationOrder, ...middleware }) => middleware);
   }
 
-  async execute(eventName: SemanticEventName, input: Omit<MiddlewareContext, "event">): Promise<MiddlewareExecution> {
+  async execute(eventName: SpecifierEventName, input: Omit<MiddlewareContext, "event">): Promise<MiddlewareExecution> {
     let context: MiddlewareContext = cloneContext({
       ...input,
-      event: semanticEvent(eventName),
+      event: specifierEvent(eventName),
       metadata: input.metadata ?? {},
     });
-    const audit: AuditRecord[] = [];
+    const records: MiddlewareRecord[] = [];
 
     for (const middleware of this.getOrdered(eventName)) {
       const started = new Date();
@@ -56,9 +50,8 @@ export class MiddlewareBus {
       try {
         const rawResult = await middleware.handler(readonlyContext(context));
         const result = normalizeResult(middleware, rawResult);
-        const record = createAuditRecord(eventName, middleware, started, startedMs, result.action);
-        audit.push(record);
-        this.auditSink?.record(record);
+        const record = createRecord(eventName, middleware, started, startedMs, result.action);
+        records.push(record);
 
         if (result.action === "modify") {
           context = applyPatch(context, result.patch);
@@ -66,29 +59,28 @@ export class MiddlewareBus {
         }
 
         if (result.action === "deny" || result.action === "require-human") {
-          return { context, result, audit };
+          return { context, result, records };
         }
       } catch (error) {
         const failureMode = middleware.failureMode ?? defaultFailureMode(middleware.type);
         const resultAction: MiddlewareAction = failureMode === "fail-open" ? "continue" : "deny";
-        const record = createAuditRecord(eventName, middleware, started, startedMs, resultAction, toAuditError(error));
-        audit.push(record);
-        this.auditSink?.record(record);
+        const record = createRecord(eventName, middleware, started, startedMs, resultAction, toRecordError(error));
+        records.push(record);
 
         if (failureMode === "fail-closed") {
           return {
             context,
             result: { action: "deny", reason: `Middleware ${middleware.id} failed closed` },
-            audit,
+            records,
           };
         }
       }
     }
 
-    return { context, result: { action: "continue" }, audit };
+    return { context, result: { action: "continue" }, records };
   }
 
-  private getOrdered(eventName: SemanticEventName): RegisteredMiddleware[] {
+  private getOrdered(eventName: SpecifierEventName): RegisteredMiddleware[] {
     const registered = this.registry.get(eventName) ?? [];
     return [...registered].sort((left, right) => {
       const phaseDelta = PHASE_ORDER.indexOf(left.type) - PHASE_ORDER.indexOf(right.type);
@@ -131,7 +123,7 @@ function normalizeResult(middleware: Middleware, rawResult: unknown): Middleware
 }
 
 function validatePatch(middlewareId: string, patch: Record<string, unknown>): void {
-  const allowedKeys = new Set(["task", "routing", "budget", "metadata"]);
+  const allowedKeys = new Set(["lifecycle", "warnings", "metadata"]);
   const invalidKeys = Object.keys(patch).filter((key) => !allowedKeys.has(key));
 
   if (invalidKeys.length > 0) {
@@ -192,14 +184,14 @@ function defaultFailureMode(type: MiddlewareType): "fail-open" | "fail-closed" {
   return type === "observer" ? "fail-open" : "fail-closed";
 }
 
-function createAuditRecord(
-  eventName: SemanticEventName,
+function createRecord(
+  eventName: SpecifierEventName,
   middleware: Middleware,
   started: Date,
   startedMs: number,
   resultAction: MiddlewareAction,
   error?: { name: string; message: string },
-): AuditRecord {
+): MiddlewareRecord {
   const ended = new Date();
   return {
     event: eventName,
@@ -213,7 +205,7 @@ function createAuditRecord(
   };
 }
 
-function toAuditError(error: unknown): { name: string; message: string } {
+function toRecordError(error: unknown): { name: string; message: string } {
   if (error instanceof Error) {
     return { name: error.name, message: error.message };
   }
