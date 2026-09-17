@@ -12,7 +12,8 @@ This is an engineering foundation, not a complete assistant yet. The repository 
 - a Specifier domain middleware bus for optional lifecycle observers, policies, and transformers;
 - a thin OpenSpec CLI gateway;
 - a minimal provider-neutral `ModelPort`;
-- a thin LiteLLM adapter for model completion.
+- a thin LiteLLM adapter for model completion;
+- a first vertical slice of the OpenSpec-aware interview core.
 
 It does not yet implement the full interview engine, question planning, contradiction analysis, autonomous artifact generation loop, web UI, queues, or persistence.
 
@@ -27,6 +28,8 @@ LiteLLM is the v1 provider abstraction for model calls. Model routing, provider 
 ## Main Modules
 
 - `src/openspec/openspec-gateway.ts` wraps the official OpenSpec CLI through `ProcessRunner`.
+- `src/interview/interview-engine.ts` manages interview session state and answer integration.
+- `src/interview/model-question-planner.ts` uses `ModelPort` to plan one material next question at a time.
 - `src/model/litellm-model-adapter.ts` maps `ModelRequest` to LiteLLM `/v1/chat/completions`.
 - `src/bus.ts` runs domain middleware deterministically.
 - `src/middleware/` contains the small bundled middleware set.
@@ -50,3 +53,25 @@ npm run check
 3. It asks OpenSpec to create and validate native changes.
 4. It runs a mandatory model-backed review through `ModelPort`.
 5. Optional middleware can log lifecycle activity or enforce deterministic local limits.
+
+## Programmatic Interview API
+
+```ts
+import { InterviewEngine, ModelQuestionPlanner } from "./src/index.ts";
+
+const planner = new ModelQuestionPlanner(modelPort, { model: "specifier-interviewer" });
+const engine = new InterviewEngine(openSpecGateway, planner);
+
+const first = await engine.start({
+  projectRoot: "/path/to/project",
+  changeName: "add-redis-cache",
+  roughIdea: "Add Redis caching to WordPress REST responses.",
+});
+
+const next = await engine.answer({
+  session: first.session,
+  answer: "Existing WordPress multisite.",
+});
+```
+
+The session stores explicit user facts, choices, assumptions, unresolved questions, contradictions, provenance, OpenSpec context, and explainable readiness.

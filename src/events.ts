@@ -1,7 +1,12 @@
 export const SPECIFIER_EVENT_NAMES = [
   "run.started",
+  "interview.started",
   "interview.turn.before",
   "interview.turn.after",
+  "interview.question.planned",
+  "interview.answer.accepted",
+  "interview.gap.detected",
+  "interview.ready",
   "openspec.change.create.before",
   "openspec.change.create.after",
   "openspec.status.before",

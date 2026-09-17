@@ -16,6 +16,16 @@ review.*
 
 Technical model-call telemetry should not be represented as product lifecycle behavior.
 
+Implemented interview lifecycle events include:
+
+```text
+interview.started
+interview.question.planned
+interview.answer.accepted
+interview.gap.detected
+interview.ready
+```
+
 ## Middleware Types
 
 Observers are read-only and fail open by default.
