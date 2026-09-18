@@ -71,6 +71,7 @@ export class InterviewEngine {
       choices: [],
       questions: [],
       unresolvedQuestions: [],
+      gaps: [],
       contradictions: [],
       readiness: notReady("Interview has not evaluated material OpenSpec requirements yet.", ["interview.initial"]),
     };

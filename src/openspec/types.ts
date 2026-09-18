@@ -5,6 +5,10 @@ export interface OpenSpecChangeInput {
   changeName: string;
 }
 
+export interface OpenSpecArtifactInput extends OpenSpecChangeInput {
+  artifactId: string;
+}
+
 export interface OpenSpecCreateChangeInput {
   projectRoot: string;
   changeName: string;
@@ -19,6 +23,7 @@ export interface OpenSpecArtifact {
   status?: string;
   dependencies?: string[];
   instructions?: unknown;
+  template?: string;
   metadata?: Record<string, unknown>;
   raw?: unknown;
 }
@@ -100,5 +105,6 @@ export interface OpenSpecGateway {
   createChange(input: OpenSpecCreateChangeInput): Promise<OpenSpecGatewayResult>;
   getStatus(input: OpenSpecChangeInput): Promise<OpenSpecGatewayResult>;
   getInstructions(input: OpenSpecChangeInput): Promise<OpenSpecGatewayResult>;
+  getArtifactInstructions(input: OpenSpecArtifactInput): Promise<OpenSpecGatewayResult>;
   validate(input: OpenSpecChangeInput): Promise<OpenSpecGatewayResult>;
 }

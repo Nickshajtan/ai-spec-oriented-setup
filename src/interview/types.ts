@@ -1,7 +1,7 @@
 import type { MiddlewareExecution } from "../middleware/types.ts";
 import type { OpenSpecGatewayResult, SpecContext } from "../openspec/types.ts";
 
-export type KnowledgeSource = "user" | "model" | "openspec" | "system";
+export type KnowledgeSource = "user" | "model" | "openspec" | "review" | "validation" | "system";
 
 export interface Provenance {
   source: KnowledgeSource;
@@ -39,6 +39,16 @@ export interface InterviewQuestion {
   candidateChoices?: string[];
   askedAt: string;
   answeredAt?: string;
+}
+
+export interface InterviewGap {
+  id: string;
+  source: "planner" | "review" | "validation";
+  reason: string;
+  artifactId?: string;
+  suggestedQuestion?: string;
+  status: "open" | "resolved";
+  provenance: Provenance;
 }
 
 export interface InterviewContradiction {
@@ -80,6 +90,7 @@ export interface InterviewSession {
   choices: InterviewChoice[];
   questions: InterviewQuestion[];
   unresolvedQuestions: InterviewQuestion[];
+  gaps: InterviewGap[];
   contradictions: InterviewContradiction[];
   readiness: InterviewReadiness;
 }
