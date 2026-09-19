@@ -80,8 +80,8 @@ Review `NodeArtifactWriter` overwrite behavior.
 Current overwrite flow effectively does:
 
 ```ts
-rm(destination)
-rename(temp, destination)
+rm(destination);
+rename(temp, destination);
 ```
 
 This creates a window where the persisted artifact does not exist and can destroy the previous

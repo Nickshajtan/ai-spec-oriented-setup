@@ -318,7 +318,7 @@ function collectArtifactsFromValue(value: unknown, artifacts: Map<string, OpenSp
       const nestedId = stringField(nested, "id") ?? stringField(nested, "artifactId") ?? key;
       upsertArtifact(artifacts, {
         id: nestedId,
-      path: stringField(nested, "resolvedOutputPath") ?? stringField(nested, "outputPath") ?? stringField(nested, "path") ?? nestedId,
+        path: stringField(nested, "resolvedOutputPath") ?? stringField(nested, "outputPath") ?? stringField(nested, "path") ?? nestedId,
         status: stringField(nested, "status") ?? stringField(nested, "state"),
         state: normalizeArtifactState(stringField(nested, "status") ?? stringField(nested, "state")),
         authority: "compatibility",

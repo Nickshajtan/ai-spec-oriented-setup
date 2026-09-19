@@ -10,7 +10,6 @@ import type {
   OpenSpecArtifact,
   OpenSpecGateway,
   OpenSpecGatewayResult,
-  QuestionPlan,
   SpecReview,
   SpecReviewer,
   WriteArtifactInput,
@@ -39,8 +38,14 @@ test("generates custom OpenSpec artifacts, validates, reviews, and becomes ready
 
   assert.equal(result.status, "ready");
   assert.equal(result.ready, true);
-  assert.deepEqual(generator.calls.map((call) => call.artifact.id), ["intent", "architecture-note"]);
-  assert.deepEqual(generator.calls[1]?.dependencies.map((dependency) => dependency.artifactId), ["intent"]);
+  assert.deepEqual(
+    generator.calls.map((call) => call.artifact.id),
+    ["intent", "architecture-note"],
+  );
+  assert.deepEqual(
+    generator.calls[1]?.dependencies.map((dependency) => dependency.artifactId),
+    ["intent"],
+  );
   assert.equal(store.files.get("openspec/changes/custom/intent.md"), "intent content");
   assert.equal(store.files.get("openspec/changes/custom/architecture.md"), "architecture content");
   assert.equal(gateway.validationCalls, 1);
@@ -87,16 +92,14 @@ test("review needs_revision revises only affected artifact with explicit overwri
   const result = await workflow(gateway, store, generator, reviewer).start(startInput());
 
   assert.equal(result.status, "ready");
-  assert.deepEqual(generator.calls.map((call) => `${call.mode}:${call.artifact.id}`), [
-    "create:intent",
-    "create:implementation-plan",
-    "revise:implementation-plan",
-  ]);
-  assert.deepEqual(store.writes.map((write) => `${write.path}:${write.overwrite === true}`), [
-    "openspec/changes/custom/intent.md:false",
-    "openspec/changes/custom/plan.md:false",
-    "openspec/changes/custom/plan.md:true",
-  ]);
+  assert.deepEqual(
+    generator.calls.map((call) => `${call.mode}:${call.artifact.id}`),
+    ["create:intent", "create:implementation-plan", "revise:implementation-plan"],
+  );
+  assert.deepEqual(
+    store.writes.map((write) => `${write.path}:${write.overwrite === true}`),
+    ["openspec/changes/custom/intent.md:false", "openspec/changes/custom/plan.md:false", "openspec/changes/custom/plan.md:true"],
+  );
   assert.equal(gateway.validationCalls, 2);
   assert.equal(reviewer.calls.length, 2);
 });
@@ -137,7 +140,10 @@ test("review needs_input reopens the same interview and resumes after answer", a
 
   assert.equal(ready.status, "ready");
   assert.equal(ready.state.interview.facts.at(-1)?.provenance.source, "user");
-  assert.deepEqual(generator.calls.map((call) => `${call.mode}:${call.artifact.id}`), ["create:intent", "revise:intent"]);
+  assert.deepEqual(
+    generator.calls.map((call) => `${call.mode}:${call.artifact.id}`),
+    ["create:intent", "revise:intent"],
+  );
 });
 
 test("validation failure is repaired before mandatory independent review", async () => {
@@ -155,7 +161,10 @@ test("validation failure is repaired before mandatory independent review", async
   const result = await workflow(gateway, store, generator, reviewer).start(startInput());
 
   assert.equal(result.status, "ready");
-  assert.deepEqual(generator.calls.map((call) => call.mode), ["create", "revise"]);
+  assert.deepEqual(
+    generator.calls.map((call) => call.mode),
+    ["create", "revise"],
+  );
   assert.equal(gateway.validationCalls, 2);
   assert.equal(reviewer.calls.length, 1);
   assert.equal(reviewer.calls[0]?.validation.valid, true);
@@ -262,7 +271,10 @@ test("validation repair targets diagnostics and never guesses the first artifact
   const result = await workflow(gateway, store, generator, new QueueReviewer([{ verdict: "pass", findings: [] }])).start(startInput());
 
   assert.equal(result.status, "ready");
-  assert.deepEqual(generator.calls.map((call) => `${call.mode}:${call.artifact.id}`), ["revise:implementation-plan"]);
+  assert.deepEqual(
+    generator.calls.map((call) => `${call.mode}:${call.artifact.id}`),
+    ["revise:implementation-plan"],
+  );
   assert.equal(store.files.get("openspec/changes/custom/intent.md"), "intent");
 });
 
@@ -326,7 +338,10 @@ test("multiple needs_input findings become deduplicated interview gaps", async (
   const blocked = await workflow(gateway, new MemoryArtifacts(), new QueueGenerator(["intent"]), reviewer).start(startInput());
 
   assert.equal(blocked.status, "needs-input");
-  assert.deepEqual(blocked.state.interview.gaps.map((gap) => gap.id), ["review.runtime", "review.scale"]);
+  assert.deepEqual(
+    blocked.state.interview.gaps.map((gap) => gap.id),
+    ["review.runtime", "review.scale"],
+  );
   assert.equal(blocked.state.interview.unresolvedQuestions.length, 1);
 });
 
@@ -391,15 +406,18 @@ test("revising a dependency reconsiders downstream generated artifacts only", as
   const result = await workflow(gateway, new MemoryArtifacts(), generator, reviewer).start(startInput());
 
   assert.equal(result.status, "ready");
-  assert.deepEqual(generator.calls.map((call) => `${call.mode}:${call.artifact.id}`), [
-    "create:intent",
-    "create:architecture-note",
-    "create:implementation-plan",
-    "create:unrelated",
-    "revise:intent",
-    "revise:architecture-note",
-    "revise:implementation-plan",
-  ]);
+  assert.deepEqual(
+    generator.calls.map((call) => `${call.mode}:${call.artifact.id}`),
+    [
+      "create:intent",
+      "create:architecture-note",
+      "create:implementation-plan",
+      "create:unrelated",
+      "revise:intent",
+      "revise:architecture-note",
+      "revise:implementation-plan",
+    ],
+  );
 });
 
 test("OpenSpec status or instructions failures before review block reviewer invocation", async () => {

@@ -316,7 +316,10 @@ test("external review gaps are asked one at a time before normal readiness resum
 
   assert.equal(reopened.question?.text, "Where will this run?");
   assert.equal(reopened.ready, false);
-  assert.deepEqual(reopened.session.gaps.map((gap) => gap.id), ["review.runtime", "review.scale"]);
+  assert.deepEqual(
+    reopened.session.gaps.map((gap) => gap.id),
+    ["review.runtime", "review.scale"],
+  );
   assert.equal(reopened.session.unresolvedQuestions.length, 1);
   assert.equal(planner.sessions.length, 1);
 
@@ -332,7 +335,10 @@ test("external review gaps are asked one at a time before normal readiness resum
 
   assert.equal(answeredScale.ready, true);
   assert.equal(answeredScale.question, undefined);
-  assert.equal(answeredScale.session.gaps.every((gap) => gap.status === "resolved"), true);
+  assert.equal(
+    answeredScale.session.gaps.every((gap) => gap.status === "resolved"),
+    true,
+  );
   assert.equal(answeredScale.session.facts.at(-1)?.provenance.source, "user");
   assert.equal(planner.sessions.length, 2);
 });

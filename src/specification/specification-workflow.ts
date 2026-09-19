@@ -1,9 +1,8 @@
 import { MiddlewareBus } from "../bus.ts";
 import type { MiddlewareExecution } from "../middleware/types.ts";
-import type { OpenSpecArtifact, OpenSpecValidation, OpenSpecValidationFinding } from "../openspec/types.ts";
+import type { OpenSpecArtifact, OpenSpecValidation } from "../openspec/types.ts";
 import type {
   AnswerSpecificationWorkflowInput,
-  ArtifactGenerator,
   GeneratedArtifactContext,
   GenerationMode,
   ReviewFinding,
@@ -117,7 +116,12 @@ export class SpecificationWorkflow {
       }
 
       if (latest.verdict === "needs_input") {
-        await this.reopenInterview(state, latest.findings.filter((finding) => finding.severity === "error"), "review", middleware);
+        await this.reopenInterview(
+          state,
+          latest.findings.filter((finding) => finding.severity === "error"),
+          "review",
+          middleware,
+        );
         middleware.push(await this.emit("interview.reopened", state, { review: latest }));
         state.status = "needs-input";
         return result(state, middleware, false);
@@ -563,11 +567,7 @@ function readyInvariantHolds(state: SpecificationWorkflowState): boolean {
   return state.interview.readiness.ready && state.validation.latest?.valid === true && state.review.latest?.verdict === "pass";
 }
 
-function result(
-  state: SpecificationWorkflowState,
-  middleware: MiddlewareExecution[],
-  ready: boolean,
-): SpecificationWorkflowResult {
+function result(state: SpecificationWorkflowState, middleware: MiddlewareExecution[], ready: boolean): SpecificationWorkflowResult {
   return {
     status: state.status,
     state,

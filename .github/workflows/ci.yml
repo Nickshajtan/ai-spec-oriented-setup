@@ -26,10 +26,13 @@ jobs:
       - name: Format check
         run: npm run format:check
       - name: Lint
+        if: always()
         run: npm run lint
       - name: Typecheck
+        if: always()
         run: npm run typecheck
       - name: Dependency audit
+        if: always()
         run: npm run audit:high
 
   tests:

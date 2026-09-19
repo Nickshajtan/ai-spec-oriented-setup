@@ -12,14 +12,10 @@ const testFiles = readdirSync(path.join(process.cwd(), "tests"))
   .filter((file) => file.endsWith(".test.ts"))
   .map((file) => path.join("tests", file));
 
-const result = spawnSync(
-  process.execPath,
-  ["--test", "--experimental-strip-types", "--experimental-test-coverage", ...testFiles],
-  {
-    cwd: process.cwd(),
-    encoding: "utf8",
-  },
-);
+const result = spawnSync(process.execPath, ["--test", "--experimental-strip-types", "--experimental-test-coverage", ...testFiles], {
+  cwd: process.cwd(),
+  encoding: "utf8",
+});
 
 const output = `${result.stdout ?? ""}${result.stderr ?? ""}`;
 process.stdout.write(output);

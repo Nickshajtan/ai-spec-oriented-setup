@@ -70,9 +70,7 @@ export class NodeArtifactWriter implements ArtifactWriter {
   }
 }
 
-type ResolvedPath =
-  | { ok: true; absolutePath: string }
-  | { ok: false; status: "path-rejected"; message: string };
+type ResolvedPath = { ok: true; absolutePath: string } | { ok: false; status: "path-rejected"; message: string };
 
 function resolveArtifactPath(input: WriteArtifactInput): ResolvedPath {
   if (!input.projectRoot || !input.path) {
