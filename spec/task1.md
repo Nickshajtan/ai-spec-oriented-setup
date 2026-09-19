@@ -1,1605 +1,984 @@
-# Implementation Specification — OpenSpec Artifact Generation, Validation & Independent Review
+# Task — PR #1 Review Remediation & CI Hardening
 
-## Context
+Work on the existing PR branch for PR #1:
 
-Specs 01, 02, and 02.5 are implemented on `main`.
+`feature/open-spec-artifacts`
 
-The repository currently provides the main architectural primitives required for the first complete specification workflow:
+Do NOT start a new architectural/product step.
 
-- `InterviewEngine`
-- structured `InterviewSession`
-- `QuestionPlanner`
-- `OpenSpecGateway`
-- generic `OpenSpecArtifact`
-- `ModelPort`
-- `LiteLLMModelAdapter`
-- `ArtifactWriter`
-- `NodeArtifactWriter`
-- `MiddlewareBus`
-- bundled logging/limits middleware
-- shared structured model-output parsing
-- OpenSpec validation boundary
+The goal is to remediate the Step 03 implementation based on code review, strengthen correctness around the workflow state machine and OpenSpec boundary, and upgrade CI so this repository has meaningful merge gates.
 
-The next step is to connect these primitives into the first complete Core workflow.
-
-The product remains:
-
-> An OpenSpec-based interactive specification assistant that gathers enough material information from a human, generates native OpenSpec artifacts, validates them through OpenSpec, independently reviews their quality, and asks the human for more information only when necessary.
-
-OpenSpec remains the authority for artifact structure and validation.
-
-Specifier owns elicitation, generation orchestration, quality review, and the decision about whether additional human information is required.
-
----
-
-# Goal
-
-Implement the first end-to-end specification generation workflow:
-
-```text
-rough idea
-    ↓
-InterviewEngine
-    ↓
-READY
-    ↓
-OpenSpec-driven artifact generation
-    ↓
-ArtifactWriter
-    ↓
-OpenSpec status/instructions
-    ↓
-repeat until required artifacts complete
-    ↓
-OpenSpec validate
-    ↓
-mandatory independent AI review
-    ↓
-┌──────────────────────────────────┐
-│ PASS                             │
-│ NEEDS_REVISION                   │
-│ NEEDS_INPUT                      │
-└──────────────────────────────────┘
-        │         │          │
-        │         │          └──→ reopen same interview
-        │         │                ↓
-        │         │             user answer
-        │         │                ↓
-        │         └────────────→ regenerate affected artifacts
-        │                          ↓
-        └──────────────────────→ validate + review again
-```
-
-A specification is finalized only when:
-
-```text
-Interview has no blocking gaps
-AND
-OpenSpec validation passes
-AND
-mandatory independent AI review passes
-```
+Do not merge the PR.
 
 ---
 
 # 1. Inspect Before Modifying
 
-Before implementation, inspect the current `main` implementation and tests.
+Inspect the complete current PR diff against `main`, then inspect at minimum:
 
-Especially inspect:
-
-- `src/interview/*`
-- `src/openspec/*`
+- `src/specification/specification-workflow.ts`
+- `src/specification/types.ts`
+- `src/specification/model-artifact-generator.ts`
+- `src/specification/model-spec-reviewer.ts`
+- `src/interview/interview-engine.ts`
+- `src/interview/types.ts`
+- `src/openspec/openspec-gateway.ts`
+- `src/openspec/types.ts`
 - `src/artifact-writer/*`
-- `src/model/*`
-- `src/middleware/*`
 - `src/events.ts`
 - `src/index.ts`
+- all workflow/OpenSpec/artifact tests
+- `package.json`
+- `.github/workflows/ci.yml`
 - `AGENTS.md`
-- OpenSpec integration docs
-- current OpenSpec CLI version/contract
-- existing OpenSpec fixtures
-- existing tests
+- relevant docs
 
-Do not assume old OpenSpec CLI behavior.
+Also verify the actual OpenSpec CLI contract supported by the repository.
 
-Verify the actual machine-readable OpenSpec CLI contract before implementing generation orchestration.
+Do not blindly implement the recommendations below if the current code already provides a stronger equivalent.
+
+Preserve the Step 03 product boundary.
 
 ---
 
-# 2. Core Workflow Ownership
+# 2. Fix Validation Repair Targeting
 
-Introduce one Core-level workflow/orchestrator responsible for coordinating the existing components.
+## Current problem
 
-A reasonable name is:
+Validation failure handling currently effectively assigns a generic OpenSpec validation failure to the first generated artifact.
 
-```ts
-SpecificationWorkflow
-```
-
-or:
+Conceptually, behavior equivalent to this is unsafe:
 
 ```ts
-SpecificationSession
+artifactId: artifacts[0]?.artifactId
 ```
 
-Prefer the name that best fits the current architecture.
+A validation error must not cause an arbitrary valid artifact to be rewritten.
 
-Its responsibility is orchestration only.
+## Required behavior
+
+Use actual OpenSpec validation diagnostics where they identify an artifact/path.
+
+Normalize enough validation information at the OpenSpec boundary to preserve actionable diagnostics.
 
 Conceptually:
 
 ```ts
-class SpecificationWorkflow {
-  constructor(
-    interviewEngine: InterviewEngine,
-    openSpecGateway: OpenSpecGateway,
-    artifactGenerator: ArtifactGenerator,
-    artifactWriter: ArtifactWriter,
-    reviewer: SpecReviewer,
-  ) {}
-}
-```
-
-Exact constructor/API is flexible.
-
-Do not make this class responsible for:
-
-- direct LLM HTTP calls;
-- filesystem implementation;
-- OpenSpec CLI invocation;
-- model routing;
-- provider selection;
-- middleware implementation;
-- prompt parsing internals.
-
-It coordinates existing ports/components.
-
----
-
-# 3. Do Not Create a Generic Workflow Engine
-
-This workflow is specifically the Specifier product lifecycle.
-
-Good:
-
-```text
-SpecificationWorkflow
-```
-
-Bad:
-
-```text
-WorkflowEngine
-PipelineEngine
-GraphExecutor
-AgentRuntime
-TaskScheduler
-StateMachineFramework
-```
-
-A simple explicit state transition implementation is preferred.
-
-Do not introduce a workflow DSL.
-
----
-
-# 4. Workflow State
-
-Introduce structured workflow state representing the lifecycle beyond the interview.
-
-Conceptually:
-
-```ts
-interface SpecificationWorkflowState {
-  interview: InterviewSession;
-
-  generation: GenerationState;
-
-  validation?: OpenSpecValidation;
-
-  review: ReviewState;
-
-  status:
-    | "interview"
-    | "generating"
-    | "validating"
-    | "reviewing"
-    | "needs-input"
-    | "needs-revision"
-    | "ready"
-    | "failed";
-}
-```
-
-Exact representation is flexible.
-
-State must be explicit enough that future CLI/agent facades can inspect it without parsing logs.
-
-Do not use raw chat history as workflow state.
-
----
-
-# 5. Generation Starts Only After Interview Readiness
-
-Artifact generation must not begin while the interview contains blocking gaps or unresolved contradictions.
-
-The Core invariant is:
-
-```text
-InterviewReadiness.ready === true
-```
-
-before generation begins.
-
-Do not allow middleware, skill instructions, CLI behavior, or the model to bypass this invariant.
-
-If later review discovers missing human information, the workflow explicitly transitions back to `needs-input`.
-
----
-
-# 6. OpenSpec Drives Artifact Generation
-
-The workflow must NOT contain:
-
-```ts
-generateProposal();
-generateSpecs();
-generateDesign();
-generateTasks();
-```
-
-It must not hardcode artifact names or order.
-
-Instead:
-
-```text
-OpenSpec status
-    ↓
-determine artifact currently available/required
-    ↓
-OpenSpec instructions for that artifact
-    ↓
-generate
-    ↓
-write
-    ↓
-refresh OpenSpec status
-```
-
-Repeat according to OpenSpec's actual artifact dependency graph/status.
-
-This must work with custom OpenSpec schemas.
-
----
-
-# 7. Fix the Remaining Heuristic OpenSpec Normalization Risk
-
-The current OpenSpec normalization recursively infers possible artifacts from arbitrary JSON structures.
-
-That behavior must NOT become authoritative for generation.
-
-Before relying on artifact information for generation:
-
-1. verify the actual current OpenSpec CLI JSON contract;
-2. explicitly normalize documented artifact/status/instruction fields;
-3. use only verified normalized fields for generation decisions.
-
-Preserve `raw` CLI output for lossless context and forward compatibility.
-
-But:
-
-> `raw` or heuristic discovery may provide context; it must not decide what artifact to generate or where to write it.
-
-If compatibility heuristics remain useful, isolate them clearly as non-authoritative compatibility behavior.
-
-Do not delete raw OpenSpec information.
-
----
-
-# 8. Artifact Instructions Must Be Artifact-Specific
-
-Generation must use OpenSpec instructions for the specific artifact being generated.
-
-If current `OpenSpecGateway.getInstructions()` only represents change-level instructions, extend the gateway minimally to support the actual OpenSpec artifact-instructions command.
-
-Conceptually:
-
-```ts
-getArtifactInstructions({
-  projectRoot,
-  changeName,
-  artifactId,
-})
-```
-
-Use the actual verified OpenSpec CLI contract.
-
-The result should expose at minimum, where OpenSpec provides them:
-
-- artifact ID;
-- resolved output path;
-- artifact instructions;
-- template;
-- dependencies;
-- relevant schema/context;
-- raw CLI result.
-
-Do not reconstruct these independently.
-
----
-
-# 9. OpenSpec Resolved Output Path Is Authoritative
-
-`ArtifactWriter` must receive the output path supplied/resolved by OpenSpec.
-
-Do not construct paths such as:
-
-```ts
-`openspec/changes/${change}/proposal.md`
-```
-
-inside generation code.
-
-Flow:
-
-```text
-OpenSpec
-    ↓
-resolved output path
-    ↓
-ArtifactGenerator
-    ↓ content
-ArtifactWriter
-    ↓
-resolved output path + content
-```
-
-`ArtifactWriter` still performs its own path-safety enforcement.
-
----
-
-# 10. ArtifactGenerator Port
-
-Introduce a focused generation boundary.
-
-Conceptually:
-
-```ts
-interface ArtifactGenerator {
-  generate(input: GenerateArtifactInput): Promise<GeneratedArtifact>;
-}
-```
-
-Example conceptual input:
-
-```ts
-interface GenerateArtifactInput {
-  artifact: OpenSpecArtifact;
-  instructions: unknown;
-  interview: InterviewSession;
-  dependencies: GeneratedArtifactContext[];
-}
-```
-
-Exact types should follow the verified OpenSpec contract.
-
-Output should be small:
-
-```ts
-interface GeneratedArtifact {
-  artifactId: string;
-  content: string;
-}
-```
-
-Do not let the generator write files.
-
-Do not let it call OpenSpec CLI.
-
-Do not let it decide which artifact comes next.
-
----
-
-# 11. ModelArtifactGenerator
-
-Provide a default AI-backed implementation using `ModelPort`.
-
-Conceptually:
-
-```text
-ArtifactGenerator
-      ↑
-ModelArtifactGenerator
-      ↓
-ModelPort
-```
-
-The generator should receive only relevant structured context.
-
-It should not receive the entire historical conversation.
-
-Useful context may include:
-
-- rough idea;
-- active non-superseded facts;
-- accepted assumptions;
-- explicit choices;
-- relevant resolved contradictions;
-- OpenSpec artifact instructions;
-- artifact template;
-- required dependency artifacts;
-- relevant OpenSpec metadata/schema information.
-
-Avoid sending irrelevant workflow logs or middleware history.
-
----
-
-# 12. Artifact Generation Prompt Principle
-
-The generation prompt must make OpenSpec authoritative.
-
-The model should be instructed to:
-
-- satisfy the provided OpenSpec artifact instructions;
-- use collected user facts as authoritative requirements;
-- distinguish accepted assumptions from user facts;
-- not invent missing product decisions;
-- respect decisions already made during the interview;
-- use dependency artifacts as context;
-- output artifact content only.
-
-Do not ask the model to decide whether the artifact should exist.
-
-OpenSpec already decides that.
-
----
-
-# 13. Artifact Dependency Context
-
-When OpenSpec says artifact B depends on artifact A, generation of B should receive A's final current content where materially relevant.
-
-Do not automatically send every generated artifact to every subsequent generation call.
-
-Prefer:
-
-```text
-OpenSpec dependency graph
-        ↓
-relevant dependency content
-```
-
-This keeps context bounded and preserves OpenSpec semantics.
-
----
-
-# 14. Generation Loop
-
-The Core generation loop should conceptually behave as:
-
-```text
-refresh status
-    ↓
-find next OpenSpec-authorized artifact
-    ↓
-fetch artifact-specific instructions
-    ↓
-generate artifact
-    ↓
-write artifact
-    ↓
-refresh status
-    ↓
-repeat
-```
-
-Termination must be based on OpenSpec status, not a hardcoded number of artifacts.
-
-Protect against accidental infinite/no-progress loops.
-
-The existing `LimitsGuard` may enforce a configurable maximum generation/review iteration count if appropriate.
-
-Core itself should also detect obvious no-progress situations.
-
-Example:
-
-```text
-same status
-+ same available artifact
-+ artifact already generated
-+ no state transition
-= fail/require human rather than loop forever
-```
-
----
-
-# 15. Artifact Write Conflicts
-
-Initial generation should not silently overwrite an existing artifact.
-
-Respect `ArtifactWriter`'s default conflict behavior.
-
-The workflow must distinguish:
-
-```text
-new generation
-```
-
-from:
-
-```text
-intentional revision/regeneration
-```
-
-Only intentional revision should use:
-
-```ts
-overwrite: true
-```
-
-Do not globally enable overwrite.
-
----
-
-# 16. OpenSpec Validation Is Mandatory
-
-After OpenSpec reports required artifacts complete, run:
-
-```ts
-OpenSpecGateway.validate(...)
-```
-
-Validation is a Core invariant.
-
-The workflow must not transition directly:
-
-```text
-generated → review
-```
-
-without validation.
-
-Required sequence:
-
-```text
-generated
-→ validate
-→ review
-```
-
----
-
-# 17. Validation Failure Handling
-
-OpenSpec validation failure must not be treated as final failure immediately if it is plausibly repairable.
-
-Normalize validation findings sufficiently for the workflow/reviewer to reason about them.
-
-Conceptually:
-
-```ts
-interface ValidationResult {
-  valid: boolean;
-  raw: unknown;
-}
-```
-
-Preserve raw validation output.
-
-If validation fails:
-
-```text
-validation failure
-    ↓
-revision analysis
-    ↓
-regenerate/revise affected artifact
-    ↓
-validate again
-```
-
-Do not ask the human to repair structural OpenSpec errors that can be resolved without a product decision.
-
-If validation failure reveals genuinely missing product information, it may eventually become `needs-input`.
-
----
-
-# 18. Mandatory Independent AI Review
-
-A successful OpenSpec validation is necessary but not sufficient.
-
-Every generated specification must receive at least one AI quality review.
-
-This is a Core invariant.
-
-Review cannot be disabled by:
-
-- CLI;
-- skill;
-- middleware;
-- configuration;
-- caller facade.
-
-A future explicit development/testing seam may mock the reviewer, but production workflow semantics always include review.
-
----
-
-# 19. Review Must Use a Fresh Model Context
-
-The reviewer must be logically independent from artifact generation.
-
-Do not implement:
-
-```text
-generator conversation
-→ "now check your own work"
-```
-
-Instead perform a separate `ModelPort.complete()` call with a newly constructed request.
-
-It may use the same physical model configuration.
-
-Independence means:
-
-```text
-fresh request/context
-```
-
-not necessarily:
-
-```text
-different provider/model
-```
-
----
-
-# 20. SpecReviewer Port
-
-Introduce:
-
-```ts
-interface SpecReviewer {
-  review(input: SpecReviewInput): Promise<SpecReview>;
-}
-```
-
-Provide a default:
-
-```text
-SpecReviewer
-     ↑
-ModelSpecReviewer
-     ↓
-ModelPort
-```
-
-The reviewer does not mutate files.
-
-It returns findings only.
-
----
-
-# 21. Reviewer Input
-
-The review should receive the final current specification state required to judge implementation readiness.
-
-Relevant input includes:
-
-- OpenSpec schema/instructions;
-- current artifact graph/status;
-- generated artifact contents;
-- interview facts;
-- accepted assumptions;
-- explicit choices;
-- unresolved contradictions if any;
-- OpenSpec validation result;
-- relevant dependency relationships.
-
-Do not provide the generation model's hidden reasoning or previous model conversation.
-
-The reviewer judges the artifacts themselves against requirements and collected human intent.
-
----
-
-# 22. Review Output
-
-Use structured output.
-
-Required top-level verdict:
-
-```ts
-type ReviewVerdict =
-  | "pass"
-  | "needs_revision"
-  | "needs_input";
-```
-
-Conceptual result:
-
-```ts
-interface SpecReview {
-  verdict: ReviewVerdict;
-
-  findings: ReviewFinding[];
-
-  summary?: string;
-}
-```
-
-Conceptual finding:
-
-```ts
-interface ReviewFinding {
-  id: string;
-
-  severity:
-    | "error"
-    | "warning";
-
+interface OpenSpecValidationFinding {
   artifactId?: string;
-
-  issue: string;
-
-  reason: string;
-
-  category?:
-    | "missing-requirement"
-    | "contradiction"
-    | "ambiguity"
-    | "openspec-compliance"
-    | "implementation-readiness"
-    | "consistency";
-
-  suggestedQuestion?: string;
+  path?: string;
+  message: string;
+  code?: string;
+  raw?: unknown;
 }
 ```
 
-Exact type names may differ.
+Exact type is flexible.
 
-Do not introduce numeric confidence scores.
+Preserve raw OpenSpec validation output.
 
----
+When validation fails:
 
-# 23. Meaning of Review Verdicts
+### Case A — target is deterministically identifiable
 
-## `pass`
+Revise the affected artifact(s).
 
-Use when:
+### Case B — validation failure is repairable but target requires reasoning
 
-- OpenSpec validation passes;
-- no material specification gap remains;
-- no unresolved contradiction blocks implementation;
-- artifacts are sufficiently explicit for an implementation agent.
+Use a narrowly scoped repair-analysis step only if necessary.
 
-Warnings may exist only if they are non-blocking.
+Do NOT ask the human merely to diagnose a structural OpenSpec error.
 
-## `needs_revision`
+### Case C — validation exposes a genuinely missing human/product decision
 
-Use when:
+Convert it into an interview gap.
 
-> The specification is insufficient, but existing information is enough to fix it without asking the human another product/requirement question.
+### Case D — target/cause cannot safely be determined
 
-Examples:
+Return a structured non-ready/require-human workflow result.
 
-- artifact omitted an already-known requirement;
-- terminology is inconsistent;
-- one artifact contradicts another even though interview state resolves the correct answer;
-- OpenSpec structure/content can be repaired from existing information;
-- implementation detail needs clarification that follows directly from known requirements.
-
-## `needs_input`
-
-Use when:
-
-> A material decision cannot be safely derived from collected information.
-
-Examples:
-
-- deployment target materially affects implementation and was never decided;
-- compatibility requirements are unknown;
-- behavior for a material edge case requires product intent;
-- two requirements conflict and existing facts do not establish which wins;
-- review discovers a genuinely new specification gap.
-
-Do not use `needs_input` merely because the reviewer would prefer more detail.
-
-Ask the human only for material information.
+Do NOT guess an artifact.
 
 ---
 
-# 24. Reviewer Must Not Invent Requirements
+# 3. Preserve All Material `needs_input` Findings
 
-The reviewer must distinguish:
+## Current problem
 
-```text
-missing implementation detail that can be derived
-```
+The workflow currently selects only one material review finding when reopening the interview.
 
-from:
+Multiple independent blocking findings can therefore be discarded from active interview state until another complete generation/review cycle rediscovers them.
 
-```text
-missing human/product decision
-```
+## Required behavior
 
-This distinction drives:
-
-```text
-needs_revision
-```
-
-versus:
+When review returns:
 
 ```text
 needs_input
 ```
 
-The reviewer should not manufacture speculative requirements and then fail the specification for not satisfying them.
+register all material findings requiring human input as structured interview gaps.
 
----
+Do not necessarily ask all questions at once.
 
-# 25. `needs_revision` Workflow
+The existing Interview Engine / QuestionPlanner should determine which unresolved material question is presented next.
 
-When review returns:
+Desired flow:
 
 ```text
-needs_revision
+review
+  ↓
+3 material human-input findings
+  ↓
+3 structured interview gaps
+  ↓
+InterviewEngine / QuestionPlanner
+  ↓
+one focused question
 ```
 
-the workflow should:
+Deduplicate equivalent findings/gaps.
 
-1. preserve review findings;
-2. determine affected artifacts;
-3. regenerate/revise only affected artifacts where possible;
-4. explicitly overwrite those artifacts;
-5. refresh OpenSpec status;
-6. run OpenSpec validation again;
-7. perform another fresh-context review.
-
-Do not regenerate the entire change by default.
-
-Prefer minimal affected-artifact revision.
-
-If dependency relationships imply downstream artifacts are stale, regenerate those according to OpenSpec dependencies/status.
-
-Do not implement an independent dependency graph.
-
-Use OpenSpec's graph.
+Do not create duplicate unresolved questions on repeated review.
 
 ---
 
-# 26. Artifact Revision
+# 4. Move External Gap Integration Into InterviewEngine
 
-Artifact revision should reuse the ArtifactGenerator boundary.
+## Current problem
 
-Do not create an entirely separate AI subsystem.
+`SpecificationWorkflow` directly mutates:
 
-Generation input may support:
+- `interview.gaps`
+- `interview.questions`
+- `interview.unresolvedQuestions`
+- `interview.readiness`
+
+This leaks InterviewEngine invariants into the workflow.
+
+## Required change
+
+Introduce the smallest InterviewEngine API needed to register externally discovered gaps.
+
+For example:
 
 ```ts
-mode: "create" | "revise"
+addExternalGaps(...)
 ```
 
-or an equivalent representation.
+or equivalent.
 
-Revision context may include:
+The Interview Engine should own:
 
-- current artifact content;
-- relevant review findings;
-- existing interview facts;
-- OpenSpec instructions;
-- dependency artifacts.
+- gap insertion;
+- provenance;
+- deduplication;
+- unresolved question planning;
+- readiness transition.
 
-The model should return the complete replacement artifact content.
+`SpecificationWorkflow` should communicate:
 
-Avoid patch/diff application in this step.
+> these material gaps were discovered by review/validation
 
-Full artifact replacement is simpler and safer for Markdown-sized specification artifacts.
+rather than manually constructing InterviewSession internals.
+
+Do NOT create another interview engine.
+
+Do NOT create a generic issue-management subsystem.
 
 ---
 
-# 27. `needs_input` Must Reopen the Existing Interview
+# 5. Correct Revision Dependency Handling
 
-This is a critical product requirement.
+## Current problem
 
-Do NOT create:
+A review may request revision of artifact A while artifact B depends on A.
 
-```text
-ReviewInterviewEngine
-ClarificationEngine
-SecondQuestionnaire
-```
+Currently B may remain untouched even though its dependency changed.
 
-Review findings become new structured gaps in the existing interview state.
-
-Conceptually:
+Example:
 
 ```text
-review finding
-    ↓
-InterviewSession
-    ↓
-new unresolved material gap
-    ↓
-QuestionPlanner
-    ↓
-user question
+intent
+  ↓
+architecture-note
+  ↓
+implementation-plan
 ```
 
-The same interview lifecycle continues.
+If `intent` changes, downstream artifacts may become stale.
+
+## Required behavior
+
+Do NOT implement a parallel dependency graph.
+
+After revision:
+
+1. write the revised artifact;
+2. ask OpenSpec for fresh status;
+3. allow OpenSpec to determine which artifacts are now incomplete/ready/stale;
+4. regenerate whatever OpenSpec says requires generation.
+
+If the actual OpenSpec CLI does not automatically expose downstream staleness after a file changes, use its documented dependency information to invalidate only necessary downstream generated artifacts.
+
+Keep any fallback small and explicitly documented.
+
+Do not regenerate every artifact by default.
+
+Add a test proving a revised dependency causes the appropriate downstream artifact to be reconsidered.
 
 ---
 
-# 28. Extend Interview State for External Gaps
+# 6. Stop Interpreting Raw OpenSpec Status Strings in Core
 
-Add the smallest mechanism necessary for the existing Interview Engine to accept newly discovered material gaps.
+## Current problem
 
-Conceptually:
+Core currently contains logic equivalent to:
 
 ```ts
-interface InterviewGap {
-  id: string;
-  source: "planner" | "review" | "validation";
-  reason: string;
-  artifactId?: string;
-  suggestedQuestion?: string;
-}
+status === "complete"
+|| status === "completed"
+|| status === "ready"
+|| status === "valid"
+|| status === "done"
+|| status === "written"
 ```
 
-Do not force this exact type if the current state can represent the concept cleanly another way.
+This recreates OpenSpec semantics inside the workflow.
 
-Important invariant:
+## Required change
 
-> Review/validation findings requiring human input become structured interview state, not an ad-hoc prompt outside InterviewEngine.
+Normalize documented OpenSpec artifact lifecycle/status at the `OpenSpecGateway` boundary.
 
----
+Expose a narrow Core-facing lifecycle representation.
 
-# 29. Review-Discovered Gap Provenance
-
-Preserve provenance.
-
-The system must be able to distinguish:
-
-```text
-user supplied fact
-model proposed assumption
-OpenSpec requirement
-review-discovered gap
-validation-discovered gap
-```
-
-A review finding must never silently become a user fact.
-
-After the user answers a review-discovered question, the answer becomes a normal user fact with provenance.
-
----
-
-# 30. Resume After Human Input
-
-After the user resolves review-discovered gaps:
-
-```text
-InterviewEngine
-    ↓
-ready again
-    ↓
-determine affected artifacts
-    ↓
-revise/regenerate
-    ↓
-OpenSpec validate
-    ↓
-fresh review
-```
-
-Do not restart the entire change.
-
-Do not discard previous valid interview facts.
-
-Do not discard review history.
-
----
-
-# 31. Review History
-
-Add structured review history to workflow state.
-
-Conceptually:
+For example:
 
 ```ts
-interface ReviewState {
-  attempts: SpecReview[];
-  latest?: SpecReview;
-}
+type OpenSpecArtifactState =
+  | "pending"
+  | "ready"
+  | "blocked"
+  | "complete";
 ```
 
-Preserve each review result.
+Use the actual verified OpenSpec CLI semantics rather than blindly adopting these exact values.
 
-This is domain state, not an audit subsystem.
+Core should reason about normalized state.
 
-Do not create a generic audit log.
+Core should not interpret arbitrary OpenSpec status strings.
+
+Preserve the original status/raw payload separately.
 
 ---
 
-# 32. Final Readiness
+# 7. Remove `metadata.normalization` From Core Authority Decisions
 
-The workflow may transition to:
+## Current problem
+
+Core currently determines whether an artifact is authoritative using implementation metadata such as:
+
+```ts
+artifact.metadata?.normalization === "documented"
+```
+
+That is a gateway implementation detail leaking into domain orchestration.
+
+## Required change
+
+Make the OpenSpec gateway contract explicit.
+
+Generation-facing artifacts returned by the authoritative API should already be safe for workflow decisions.
+
+Compatibility/heuristically discovered artifacts must not be mixed indistinguishably into that collection.
+
+Possible approaches:
+
+```ts
+authoritativeArtifacts
+compatibilityArtifacts
+```
+
+or a strongly typed authority field at the boundary.
+
+Choose the smallest clean design.
+
+Core must not know how JSON normalization was implemented.
+
+---
+
+# 8. OpenSpec Failures Must Block Review
+
+## Current problem
+
+Before review, the workflow calls OpenSpec status/instructions but does not reliably stop if those calls fail.
+
+The reviewer may therefore receive incomplete/undefined OpenSpec context and potentially return `pass`.
+
+## Required behavior
+
+Before invoking `SpecReviewer`, verify all required OpenSpec calls succeeded.
+
+If status or instructions retrieval fails:
+
+```text
+DO NOT call reviewer
+DO NOT allow pass
+DO NOT become ready
+```
+
+Return an appropriate structured workflow failure.
+
+Add tests for both status and instructions failures before review.
+
+---
+
+# 9. Persisted Dependency Reads Must Fail Safely
+
+## Current problem
+
+Dependency reading may silently fall back to cached in-memory generated content after filesystem read failure.
+
+Persisted artifacts are supposed to be the authoritative current artifact state.
+
+## Required behavior
+
+Differentiate read outcomes.
+
+For example:
+
+```text
+read
+not-found
+path-rejected
+read-failed
+```
+
+`path-rejected` and `read-failed` must fail the generation/revision workflow.
+
+Do not silently use cached content after an I/O/security failure.
+
+If `not-found` has a legitimate lifecycle meaning, handle it explicitly.
+
+Otherwise fail.
+
+The same authority principle applies:
+
+> when persisted content is expected to exist, review/generation should reason about persisted content.
+
+---
+
+# 10. Separate Iteration Counters
+
+## Current problem
+
+Validation repair limits currently depend on review-attempt counts.
+
+These are different lifecycle dimensions.
+
+## Required change
+
+Track appropriate counters separately.
+
+At minimum distinguish:
+
+```text
+artifact generation/revision attempts
+validation repair attempts
+AI review attempts
+```
+
+Exact state representation is flexible.
+
+Example:
+
+```ts
+generation.attempts
+validation.repairAttempts
+review.attempts.length
+```
+
+Do not report a validation-repair failure as a review iteration failure.
+
+Use accurate failure codes, e.g.:
+
+```text
+generation-iteration-limit
+validation-repair-limit
+review-iteration-limit
+```
+
+or equivalent.
+
+Defaults should remain conservative.
+
+No infinite retries.
+
+---
+
+# 11. Keep Review Independent
+
+Preserve the current good behavior:
+
+```text
+artifact generation
+    ↓
+fresh ModelPort request
+    ↓
+spec review
+```
+
+Do not turn review into a continuation of generation messages.
+
+Add/retain tests proving separate model requests.
+
+Same physical model is allowed.
+
+Fresh logical context is required.
+
+---
+
+# 12. Preserve Final Readiness Invariant
+
+The workflow may return:
 
 ```text
 ready
 ```
 
-only when all three conditions are true:
+only when:
 
 ```text
-1. interview ready
-2. OpenSpec validation valid
-3. latest mandatory review verdict == pass
+Interview ready
+AND
+OpenSpec validation valid
+AND
+latest independent review == pass
 ```
 
-Encode this invariant centrally.
+Keep this centralized in Core.
 
-Do not duplicate it across CLI/skill/middleware.
+Add regression tests if necessary.
+
+No caller, skill, CLI, middleware or model response may bypass it.
 
 ---
 
-# 33. Review Iteration Guard
+# 13. CI Hardening
 
-Prevent runaway loops.
+The repository has moved beyond a skeleton.
 
-Use the existing limits architecture where appropriate.
-
-Add a configurable review iteration limit if not already available.
-
-Example:
-
-```ts
-maxReviewIterations
-```
-
-When reached:
+Current CI effectively runs:
 
 ```text
-require-human
+npm ci
+npm run check
 ```
 
-or a clear non-ready workflow result.
+Strengthen it into meaningful merge gates.
 
-Do not silently mark the specification ready.
-
-Do not retry indefinitely.
+Do not create an enterprise-scale CI platform.
 
 ---
 
-# 34. Generation Iteration Guard
+# 14. Add ESLint
 
-Likewise protect the OpenSpec generation loop from no-progress/infinite states.
+Add a current TypeScript-aware ESLint setup appropriate for this repository.
 
-Possible conditions:
+Prefer modern flat configuration if supported by the selected versions.
 
-- maximum artifact-generation transitions;
-- repeated identical OpenSpec status;
-- repeated same artifact without state progress.
+Focus on correctness and maintainability.
 
-Keep this deterministic and simple.
+Avoid excessive stylistic rules already handled by formatting.
 
-Do not create a scheduler.
+At minimum catch useful issues such as:
+
+- unused imports/variables;
+- suspicious async usage;
+- accidental promises;
+- obviously unsafe TypeScript patterns where practical;
+- unreachable/dead constructs.
+
+Add:
+
+```json
+"lint": "..."
+```
+
+and make lint non-mutating in CI.
 
 ---
 
-# 35. Middleware Events
+# 15. Add Prettier Format Check
 
-Add only semantic events required by the real workflow.
+Add Prettier for deterministic formatting.
 
-Candidate events:
+Provide separate scripts:
+
+```json
+"format": "... --write ..."
+"format:check": "... --check ..."
+```
+
+CI uses only:
 
 ```text
-generation.started
-artifact.generation.started
-artifact.generated
-
-openspec.validation.completed
-
-review.started
-review.finding.detected
-review.completed
-
-interview.reopened
-
-specification.ready
-specification.failed
+format:check
 ```
 
-Reuse existing events where semantically equivalent.
-
-Clean up speculative event names if the implemented lifecycle establishes better names.
-
-Do not emit low-level events for:
-
-- prompt construction;
-- JSON parsing;
-- array iteration;
-- dependency lookup;
-- file reads.
-
-Model invocation observability remains infrastructure-level rather than a domain lifecycle.
+Do not mix formatting responsibilities into ESLint unless there is a compelling reason.
 
 ---
 
-# 36. Existing `review.*` Events
+# 16. Improve `npm run check`
 
-The current event registry already contains preliminary review event names.
+`npm run check` should represent the complete fast local quality gate.
 
-Review them during implementation.
-
-Keep them if they match the actual lifecycle.
-
-Rename/remove them if they were speculative and the resulting implementation has clearer semantic boundaries.
-
-Do not preserve event names merely because they already exist if no code depends on them.
-
----
-
-# 37. Reading Generated Artifacts
-
-The reviewer and revision flow need current artifact content.
-
-Introduce the smallest mechanism necessary.
-
-Options include:
-
-- a small `ArtifactReader` port;
-- a read method adjacent to artifact infrastructure;
-- using explicitly tracked generated content where sufficient.
-
-Prefer a thin `ArtifactReader` if persisted files are the authoritative current artifact state.
-
-Conceptually:
-
-```ts
-interface ArtifactReader {
-  read(input: ReadArtifactInput): Promise<ReadArtifactResult>;
-}
-```
-
-It must have the same path-safety principle as `ArtifactWriter`.
-
-Do not turn `ArtifactWriter` into a filesystem service with many unrelated methods merely for convenience.
-
----
-
-# 38. Persisted Artifacts Are the Review Target
-
-Review the actual current artifact contents that exist after generation/revision.
-
-Do not review only the model's pre-write response if persisted content can differ or future middleware can affect persistence.
-
-The persisted OpenSpec change is the specification being judged.
-
----
-
-# 39. Failure Semantics
-
-Differentiate at least:
+Recommended:
 
 ```text
-needs human input
-repairable revision
-OpenSpec validation failure
-model invocation failure
-OpenSpec CLI failure
-artifact I/O failure
-workflow invariant/no-progress failure
+format:check
+lint
+typecheck
+test
 ```
 
-Do not collapse everything into:
+Ordering may differ.
+
+Keep it deterministic and network-free.
+
+---
+
+# 17. Coverage
+
+Add test coverage reporting using tooling compatible with the existing Node test setup.
+
+Do not switch test frameworks solely for coverage.
+
+Prefer Node-native coverage if it cleanly supports the current environment.
+
+Establish meaningful but achievable thresholds.
+
+Initial target:
 
 ```text
-Error("generation failed")
+lines:      >= 80%
+functions:  >= 80%
+branches:   >= 70–75%
 ```
 
-Reuse existing typed result/error patterns where practical.
+Adjust slightly if justified by the actual baseline, but do not silently choose trivial thresholds.
 
-Do not build a giant error taxonomy.
+Branch coverage is particularly valuable for:
 
----
+- `SpecificationWorkflow`
+- InterviewEngine
+- OpenSpec normalization
+- ArtifactWriter/Reader
 
-# 40. No Automatic Implementation
-
-The workflow ends when the OpenSpec change is ready.
-
-It must NOT:
-
-- execute `tasks.md`;
-- invoke coding agents to implement the feature;
-- modify application source code;
-- create commits;
-- create PRs;
-- archive the OpenSpec change automatically.
-
-Those belong outside this product boundary.
-
-Final output is a reviewed, validated, implementation-ready OpenSpec change.
-
----
-
-# 41. Public Programmatic API
-
-Expose a clean programmatic API sufficient for the future skill/CLI facade.
-
-The API should support the lifecycle conceptually like:
-
-```ts
-const workflow = new SpecificationWorkflow(...);
-
-let result = await workflow.start({
-  projectRoot,
-  changeName,
-  roughIdea,
-});
-
-while (result.status === "needs-input") {
-  result = await workflow.answer({
-    state: result.state,
-    answer: userAnswer,
-  });
-}
-
-if (result.status === "ready") {
-  // OpenSpec change is validated and independently reviewed.
-}
-```
-
-Exact API may differ.
-
-Important properties:
-
-- caller does not orchestrate artifact order;
-- caller does not invoke validation manually;
-- caller does not invoke review manually;
-- caller only provides human answers when Core requests them.
-
-This preserves one execution path for future CLI and agent skill facades.
-
----
-
-# 42. Testability
-
-All external boundaries must be mockable:
+Expose:
 
 ```text
-OpenSpecGateway
-ModelPort / ArtifactGenerator / SpecReviewer
-ArtifactWriter
-ArtifactReader
+npm run test:coverage
 ```
 
-Tests must not require:
+CI should enforce thresholds.
 
-- paid model APIs;
-- LiteLLM server;
-- Anthropic/OpenAI credentials;
-- network access.
-
-OpenSpec CLI integration tests may use controlled fixtures/mocked `ProcessRunner` unless a lightweight local integration test is already established.
+Do not chase 100% coverage.
 
 ---
 
-# 43. Tests — Happy Path
+# 18. Real OpenSpec Integration Smoke Test
 
-Add an end-to-end Core test covering:
+This is important.
+
+Most workflow tests correctly use fake infrastructure, but OpenSpec is a central external contract.
+
+CI must contain at least one real smoke/integration test against a pinned supported OpenSpec CLI version.
+
+The test should:
+
+1. create/use a temporary fixture project;
+2. initialize/use a minimal OpenSpec configuration as required;
+3. exercise the actual CLI through `CliOpenSpecGateway`;
+4. verify machine-readable status/instructions;
+5. verify artifact-specific instructions;
+6. verify resolved artifact path;
+7. verify validation;
+8. preferably use a small custom schema/artifact naming case.
+
+Do not require model credentials.
+
+Do not call paid APIs.
+
+The smoke test must **not silently skip in CI** because OpenSpec is unavailable.
+
+CI should explicitly install the pinned OpenSpec CLI version first.
+
+If OpenSpec CLI installation fails, the integration job fails.
+
+Keep the OpenSpec version explicit and documented.
+
+---
+
+# 19. CI Job Structure
+
+Split CI into useful visible checks rather than one opaque job.
+
+Recommended shape:
 
 ```text
-rough idea
-→ interview question(s)
-→ answers
-→ interview ready
-→ artifact A generated
-→ artifact B generated according to OpenSpec status
-→ persisted
-→ validation passes
-→ independent review passes
-→ workflow ready
+CI
+├── quality
+│   ├── format check
+│   ├── lint
+│   └── typecheck
+│
+├── tests
+│   ├── unit/core tests
+│   └── coverage thresholds
+│
+└── openspec-integration
+    └── pinned real OpenSpec smoke test
 ```
 
-Use custom/non-standard artifact names in at least one test.
+Exact YAML organization is flexible.
+
+These should be suitable as required branch-protection checks.
+
+Avoid unnecessary job fragmentation.
+
+---
+
+# 20. Node Version Policy
+
+Inspect the actual project requirement.
+
+If the repository intentionally targets Node 22 only, explicitly document and enforce Node 22.
 
 For example:
 
-```text
-intent
-architecture-note
-implementation-plan
+```json
+"engines": {
+  "node": ">=22"
+}
 ```
 
-This verifies there is no hidden dependency on:
+or a narrower supported policy if appropriate.
+
+Do not add a Node 20 matrix merely to look comprehensive if the project relies on Node 22 functionality such as the current TypeScript execution path.
+
+If Node 20 is genuinely intended to be supported, test it.
+
+Otherwise use Node 22 consistently.
+
+---
+
+# 21. Dependency Security Check
+
+Add an npm dependency audit.
+
+Recommended initial policy:
 
 ```text
-proposal/design/tasks/specs
+npm audit --audit-level=high
+```
+
+Evaluate the actual dependency tree first.
+
+If the current ecosystem produces unavoidable/noisy findings, keep this job advisory rather than weakening or ignoring vulnerabilities blindly.
+
+Do not use `npm audit fix --force` automatically.
+
+Do not automatically mutate dependencies in CI.
+
+---
+
+# 22. GitHub Actions Hygiene
+
+Use maintained official actions.
+
+Current major-version pinning such as:
+
+```text
+actions/checkout@v4
+actions/setup-node@v4
+```
+
+is acceptable for this task.
+
+Do not introduce unnecessary third-party actions when a shell/npm command is sufficient.
+
+Do not add secrets.
+
+Do not grant write permissions.
+
+Explicitly use least privilege where practical:
+
+```yaml
+permissions:
+  contents: read
 ```
 
 ---
 
-# 44. Tests — Review Revision
+# 23. Concurrency
 
-Test:
+Add PR CI concurrency so obsolete runs are cancelled after a new push.
 
-```text
-generation
-→ validation pass
-→ review needs_revision
-→ affected artifact revised
-→ overwrite explicitly allowed
-→ validation reruns
-→ second fresh review passes
-→ ready
+Conceptually:
+
+```yaml
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
 ```
 
-Assert that unaffected artifacts are not unnecessarily regenerated.
+Use valid GitHub Actions syntax.
+
+This avoids wasting CI on stale Codex pushes.
 
 ---
 
-# 45. Tests — Review Needs Human Input
+# 24. Branch Protection Documentation
 
-Test:
+CI cannot configure repository branch protection merely by editing workflow files.
+
+Document the recommended required checks in README/contributor docs if appropriate.
+
+Recommended required checks after this PR:
 
 ```text
-generation
-→ validation pass
-→ review needs_input
-→ finding inserted into existing InterviewSession
-→ workflow status needs-input
-→ user answers
-→ interview becomes ready
-→ affected artifact revised
-→ validation
-→ fresh review
-→ pass
+quality
+tests
+openspec-integration
 ```
 
-Assert provenance of the new user fact.
+Recommend:
+
+- require PR before merge;
+- require required status checks;
+- require branch to be up to date before merge;
+- require at least one human approval;
+- dismiss stale approvals after new commits.
+
+Do not attempt to modify repository settings from code.
 
 ---
 
-# 46. Tests — Validation Failure
+# 25. Tests Required for This Remediation
 
-Test:
+Add regression tests covering at least:
+
+### Validation
+
+- validation finding targets the correct artifact when OpenSpec provides a target;
+- validation does not arbitrarily rewrite the first artifact;
+- unresolvable validation target does not guess;
+- validation repair limit is independent from review limit.
+
+### Review input
+
+- multiple material `needs_input` findings become structured gaps;
+- gaps are deduplicated;
+- InterviewEngine owns external-gap insertion;
+- user answers preserve user provenance.
+
+### Revision dependencies
+
+Given:
 
 ```text
-generation
-→ OpenSpec validation fails
-→ repairable revision
-→ validation reruns
-→ review still mandatory
+A → B → C
 ```
 
-Also test a validation-derived missing product decision that becomes human input if the architecture supports this distinction cleanly.
+if A is materially revised, verify downstream stale artifacts are reconsidered according to OpenSpec state/dependencies.
+
+Do not blindly regenerate unrelated D.
+
+### Review prerequisites
+
+- OpenSpec status failure prevents reviewer invocation;
+- OpenSpec instructions failure prevents reviewer invocation.
+
+### Artifact reads
+
+- dependency `path-rejected` fails workflow;
+- dependency `read-failed` fails workflow;
+- no silent cached fallback for these failures.
+
+### Status normalization
+
+- documented OpenSpec statuses normalize correctly at gateway boundary;
+- Core does not interpret raw status synonyms;
+- compatibility artifact discoveries cannot drive generation.
+
+### Existing behavior
+
+Retain regression coverage for:
+
+- happy path;
+- custom artifact names;
+- `needs_revision`;
+- `needs_input`;
+- explicit overwrite during revision;
+- writer conflict;
+- fresh-context review;
+- generation no-progress;
+- malformed structured review output;
+- final readiness invariant.
 
 ---
 
-# 47. Tests — Guards
+# 26. Do Not Overengineer
 
-Test:
+Do NOT introduce:
 
-- repeated OpenSpec status with no progress;
-- review iteration limit;
-- generation iteration limit;
-- ArtifactWriter conflict on initial generation;
-- intentional overwrite during revision;
-- middleware deny/require-human;
-- model malformed structured review output;
-- OpenSpec CLI failure;
-- artifact read/write failure.
-
-No infinite test loops.
-
----
-
-# 48. Tests — Independent Review
-
-Explicitly verify that review is a separate model invocation from generation.
-
-The reviewer must receive a newly constructed request rather than continuation of generation messages.
-
-The test does not need different model names.
-
-It should prove context separation.
-
----
-
-# 49. Documentation
-
-Update architecture docs with the complete Core lifecycle:
-
-```text
-Interview
-→ Generate
-→ Persist
-→ Validate
-→ Review
-→ Revise/Reopen
-→ Ready
-```
-
-Document the three Core readiness invariants.
-
-Document the difference between:
-
-```text
-needs_revision
-```
-
-and:
-
-```text
-needs_input
-```
-
-Document that OpenSpec defines artifact structure/order while Specifier owns elicitation and quality review.
-
----
-
-# 50. AGENTS.md
-
-Update the engineering contract if necessary with these permanent rules:
-
-1. OpenSpec is authoritative for artifact structure, dependencies, paths, instructions and validation.
-2. Specifier must not hardcode standard OpenSpec artifact names.
-3. Human questions are asked only for material decisions that cannot safely be derived.
-4. OpenSpec validation is mandatory.
-5. Independent fresh-context AI review is mandatory.
-6. Review findings requiring human decisions return to the existing Interview Core.
-7. `needs_revision` must not unnecessarily involve the human.
-8. Final readiness requires interview readiness + OpenSpec validation + review pass.
-9. Core remains caller-agnostic.
-10. Skills and CLI facades contain no specification business logic.
-
----
-
-# 51. Non-goals
-
-Do NOT implement in this step:
-
-- polished CLI;
-- Codex skill;
-- Claude skill;
-- agent launcher;
-- Web UI;
-- HTTP API;
-- persistent database;
-- multi-user sessions;
-- background jobs;
-- queues;
 - generic workflow engine;
-- model routing;
-- provider routing;
+- graph execution framework;
+- event sourcing;
+- database;
+- queue;
+- agent runtime;
+- model router;
+- provider router;
 - FinOps;
-- automatic feature implementation;
-- Git commits;
-- PR creation;
-- OpenSpec archive workflow;
+- tracing platform;
+- generic validation framework;
+- generic issue tracker;
 - semantic embeddings;
-- vector database;
-- generic agent runtime.
+- vector database.
+
+Use the existing architecture.
+
+Add only the smallest abstractions required to make Step 03 correct.
 
 ---
 
-# Expected Architecture
+# 27. Preserve Existing Product Boundaries
+
+After remediation, responsibilities should remain:
 
 ```text
-                       ┌────────────────────┐
-                       │   Caller / Facade  │
-                       │ future CLI / skill │
-                       └─────────┬──────────┘
-                                 │
-                                 ▼
-                    ┌────────────────────────┐
-                    │ SpecificationWorkflow  │
-                    └────────────┬───────────┘
-                                 │
-           ┌─────────────────────┼──────────────────────┐
-           │                     │                      │
-           ▼                     ▼                      ▼
-  ┌─────────────────┐   ┌─────────────────┐   ┌────────────────┐
-  │ InterviewEngine │   │ OpenSpecGateway │   │  SpecReviewer  │
-  └────────┬────────┘   └────────┬────────┘   └───────┬────────┘
-           │                     │                    │
-           │                     ▼                    ▼
-           │               OpenSpec CLI           ModelPort
-           │
-           ▼
-     QuestionPlanner
-           │
-           ▼
-       ModelPort
+OpenSpec
+    artifact/schema/dependency/path/validation authority
 
+InterviewEngine
+    human-information state and questions
 
-                 generation path
+SpecificationWorkflow
+    product lifecycle orchestration
 
-              OpenSpec instructions
-                       │
-                       ▼
-              ArtifactGenerator
-                       │
-                       ▼
-                   ModelPort
-                       │
-                       ▼
-                ArtifactWriter
-                       │
-                       ▼
-                    files
-                       │
-                       ▼
-                ArtifactReader
-                       │
-                       ▼
-                   Reviewer
+ArtifactGenerator
+    artifact content generation
+
+ArtifactWriter / ArtifactReader
+    safe persistence boundary
+
+SpecReviewer
+    independent specification-quality review
+
+ModelPort
+    generic model invocation
+
+Middleware
+    optional semantic guards/observers
 ```
 
-Middleware surrounds semantic lifecycle boundaries but does not own the workflow.
+Do not blur these responsibilities while fixing the bugs.
+
+---
+
+# 28. Verification
+
+Before considering the task complete, run locally:
+
+```text
+npm ci
+npm run format:check
+npm run lint
+npm run typecheck
+npm test
+npm run test:coverage
+npm run check
+```
+
+Also run the real OpenSpec integration test using the pinned CLI version.
+
+Inspect the final diff against `main`.
+
+Confirm that no generated coverage/build/cache files are committed.
+
+---
+
+# 29. Final Codex Report
+
+When finished, provide a concise implementation report containing:
+
+1. review finding → fix mapping;
+2. any review recommendation intentionally not implemented and why;
+3. OpenSpec CLI version used;
+4. new/changed public APIs;
+5. new CI jobs;
+6. coverage thresholds and actual achieved coverage;
+7. commands executed and results;
+8. any remaining risks before merge.
+
+Do not merely say “all tests pass.”
 
 ---
 
 # Definition of Done
 
-Step 03 is complete when:
+This remediation is complete when:
 
-1. A Core-level specification workflow exists.
-2. Generation begins only from a ready InterviewSession.
-3. Artifact generation order is driven by verified OpenSpec status/instructions.
-4. Standard OpenSpec artifact names are not hardcoded.
-5. Heuristic OpenSpec normalization is not authoritative for generation.
-6. Artifact-specific OpenSpec instructions are used.
-7. OpenSpec-resolved artifact paths are used.
-8. `ArtifactGenerator` is separate from persistence.
-9. `ArtifactWriter` performs persistence.
-10. Current persisted artifacts can be read for review/revision.
-11. OpenSpec validation is mandatory.
-12. Independent fresh-context AI review is mandatory.
-13. Review returns `pass`, `needs_revision`, or `needs_input`.
-14. `needs_revision` revises affected artifacts without unnecessary human interaction.
-15. `needs_input` creates structured gaps in the existing InterviewSession.
-16. Human answers retain provenance.
-17. The workflow resumes after new human input rather than restarting.
-18. Validation runs again after material revisions.
-19. Review runs again after material revisions.
-20. Review history is retained.
-21. Runaway generation/review loops are guarded.
-22. Final `ready` requires interview readiness + valid OpenSpec + review pass.
-23. Custom OpenSpec artifact schemas are covered by tests.
-24. No paid/network model access is required by tests.
-25. Existing Specs 01/02/02.5 behavior remains green.
-26. `npm run check` passes.
-27. CI is green.
+1. validation repair never arbitrarily targets the first artifact;
+2. validation diagnostics preserve actionable OpenSpec information;
+3. multiple material review gaps are retained;
+4. InterviewEngine owns external-gap integration;
+5. revised dependencies cause appropriate downstream reconsideration;
+6. Core no longer interprets arbitrary raw OpenSpec status synonyms;
+7. gateway implementation metadata does not leak into Core authority decisions;
+8. OpenSpec status/instruction failures block review;
+9. persisted dependency read failures fail safely;
+10. validation repair, generation, and review iteration limits are distinct;
+11. mandatory fresh-context review remains intact;
+12. final readiness invariant remains centralized;
+13. ESLint is configured and passing;
+14. Prettier format checking is configured and passing;
+15. coverage thresholds are enforced;
+16. a real pinned OpenSpec integration smoke test runs in CI without silent skipping;
+17. CI exposes useful separate merge checks;
+18. CI uses least-privilege permissions and concurrency cancellation;
+19. dependency security audit is present with an appropriate required/advisory policy;
+20. all regression and remediation tests pass;
+21. `npm run check` passes;
+22. the PR remains within Step 03 scope;
+23. no generic platform/framework has been introduced.
 
-## Final implementation principle
+## Guiding principle
 
-The workflow should repeatedly answer three different questions:
+Prefer:
 
 ```text
-Interview:
-"Do we know enough from the human?"
-
-OpenSpec:
-"Are the required artifacts structurally complete and valid?"
-
-Reviewer:
-"Are those artifacts actually good enough for an implementation agent?"
+deterministic boundary
+→ explicit state
+→ targeted repair
+→ revalidate
+→ independent review
 ```
 
-These responsibilities must remain separate.
-
-When the answer is no:
+over:
 
 ```text
-missing human decision
-    → ask the human
-
-known information represented badly
-    → revise the artifacts
-
-invalid OpenSpec structure
-    → repair and validate again
+guess
+→ rewrite something
+→ hope the next model call catches it
 ```
 
-Do not solve all three problems with another generic AI call.
+And for CI:
+
+```text
+tests should protect the architecture's real external contracts,
+not only prove that mocks agree with our implementation.
+```

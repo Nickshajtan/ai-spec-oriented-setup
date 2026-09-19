@@ -30,7 +30,9 @@ export type { InterviewEngineOptions } from "./interview/interview-engine.ts";
 export type { ModelQuestionPlannerConfig } from "./interview/model-question-planner.ts";
 export type {
   AnswerInterviewInput,
+  AddExternalGapsInput,
   CandidateQuestion,
+  ExternalInterviewGapInput,
   InterviewAssumption,
   InterviewChoice,
   InterviewContradiction,
@@ -78,7 +80,9 @@ export type {
 } from "./model/types.ts";
 export type {
   OpenSpecArtifact,
+  OpenSpecArtifactAuthority,
   OpenSpecArtifactInput,
+  OpenSpecArtifactState,
   OpenSpecChangeInput,
   OpenSpecCommandResult,
   OpenSpecCreateChangeInput,
@@ -89,6 +93,7 @@ export type {
   OpenSpecInstructions,
   OpenSpecStatus,
   OpenSpecValidation,
+  OpenSpecValidationFinding,
   SpecContext,
 } from "./openspec/types.ts";
 export type { CliOpenSpecGatewayOptions } from "./openspec/openspec-gateway.ts";
@@ -103,6 +108,7 @@ export type {
   GeneratedArtifactContext,
   GenerationMode,
   GenerationState,
+  InterviewGapRegistrar,
   ModelArtifactGeneratorConfig,
   ModelSpecReviewerConfig,
   ReviewFinding,
@@ -118,4 +124,5 @@ export type {
   SpecificationWorkflowState,
   SpecificationWorkflowStatus,
   StartSpecificationWorkflowInput,
+  ValidationState,
 } from "./specification/types.ts";

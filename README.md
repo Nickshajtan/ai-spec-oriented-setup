@@ -49,12 +49,40 @@ Artifact persistence is deliberately generic. OpenSpec/Core decide what artifact
 
 ```powershell
 npm install
+npm run format:check
+npm run lint
 npm run typecheck
 npm test
+npm run test:coverage
+npm run openspec:smoke
 npm run check
 ```
 
-`npm run check` is the local quality gate. Tests mock infrastructure boundaries and do not require real LLM credentials, a running LiteLLM instance, or paid external API calls. The OpenSpec CLI smoke test skips automatically when the CLI is not installed.
+`npm run check` is the local quality gate: format check, lint, typecheck, unit/core tests, and coverage thresholds. Tests mock model infrastructure and do not require real LLM credentials, a running LiteLLM instance, or paid external API calls.
+
+Coverage thresholds are enforced by `npm run test:coverage`:
+
+- lines: 80%
+- functions: 80%
+- branches: 73%
+
+The real OpenSpec smoke test uses pinned OpenSpec CLI `1.12.0` and does not silently skip in CI.
+
+## CI And Branch Protection
+
+GitHub Actions exposes three intended required checks:
+
+- `quality`
+- `tests`
+- `openspec-integration`
+
+Recommended branch protection for `main`:
+
+- require pull requests before merge;
+- require the three status checks above;
+- require branches to be up to date before merge;
+- require at least one human approval;
+- dismiss stale approvals after new commits.
 
 ## Core Workflow
 

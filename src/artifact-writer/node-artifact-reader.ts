@@ -30,10 +30,10 @@ type ResolvedPath = { ok: true; absolutePath: string } | { ok: false; message: s
 
 function resolveArtifactPath(input: ReadArtifactInput): ResolvedPath {
   if (!input.projectRoot || !input.path) return { ok: false, message: "projectRoot and path are required" };
-  if (path.isAbsolute(input.path) || input.path.includes("\0")) return { ok: false, message: `Unsafe artifact path: ${input.path}` };
+  if (input.path.includes("\0")) return { ok: false, message: `Unsafe artifact path: ${input.path}` };
 
   const projectRoot = path.resolve(input.projectRoot);
-  const absolutePath = path.resolve(projectRoot, input.path);
+  const absolutePath = path.isAbsolute(input.path) ? path.resolve(input.path) : path.resolve(projectRoot, input.path);
   if (!isWithin(projectRoot, absolutePath)) return { ok: false, message: `Artifact path escapes project root: ${input.path}` };
 
   return { ok: true, absolutePath };

@@ -2,7 +2,9 @@ import { MiddlewareBus } from "../bus.ts";
 import type { MiddlewareExecution } from "../middleware/types.ts";
 import type { OpenSpecGateway } from "../openspec/types.ts";
 import type {
+  AddExternalGapsInput,
   AnswerInterviewInput,
+  ExternalInterviewGapInput,
   InterviewContradiction,
   InterviewFact,
   InterviewQuestion,
@@ -88,6 +90,7 @@ export class InterviewEngine {
     if (activeQuestion) {
       activeQuestion.answeredAt = now;
       session.unresolvedQuestions = session.unresolvedQuestions.filter((question) => question.id !== activeQuestion.id);
+      session.gaps = session.gaps.map((gap) => (gap.id === activeQuestion.gapId ? { ...gap, status: "resolved" } : gap));
     }
 
     const accepted = new Set(input.acceptedAssumptionIds ?? []);
@@ -130,6 +133,54 @@ export class InterviewEngine {
 
     const acceptedEvent = await this.emit("interview.answer.accepted", session, { answer: input.answer, question: activeQuestion });
     return this.planNext(session, [acceptedEvent]);
+  }
+
+  async addExternalGaps(input: AddExternalGapsInput): Promise<InterviewStepResult> {
+    const session = cloneSession(input.session);
+    const addedQuestions: InterviewQuestion[] = [];
+    const now = this.now();
+
+    for (const gapInput of input.gaps) {
+      const gapId = externalGapId(gapInput);
+      const existing = session.gaps.find((gap) => gap.id === gapId && gap.status === "open");
+      if (existing) continue;
+
+      session.gaps.push({
+        id: gapId,
+        source: gapInput.source,
+        reason: gapInput.reason,
+        artifactId: gapInput.artifactId,
+        suggestedQuestion: gapInput.suggestedQuestion,
+        status: "open",
+        provenance: {
+          source: gapInput.source,
+          recordedAt: now,
+          detail: gapInput.issue,
+        },
+      });
+      addedQuestions.push({
+        id: this.id("question"),
+        text: gapInput.suggestedQuestion ?? gapInput.issue ?? gapInput.reason,
+        why: gapInput.reason,
+        gapId,
+        askedAt: now,
+      });
+    }
+
+    const openGapIds = session.gaps.filter((gap) => gap.status === "open").map((gap) => gap.id);
+    if (openGapIds.length > 0) {
+      const unresolvedGapIds = new Set(session.unresolvedQuestions.map((question) => question.gapId));
+      const nextQuestion = addedQuestions.find((question) => !unresolvedGapIds.has(question.gapId));
+      if (nextQuestion) {
+        session.turnCount += 1;
+        session.questions.push(nextQuestion);
+        session.unresolvedQuestions.push(nextQuestion);
+      }
+      session.readiness = notReady("Externally discovered material gaps must be resolved before proceeding.", openGapIds);
+    }
+
+    const gapEvent = await this.emit("interview.gap.detected", session, { gaps: input.gaps });
+    return { session, question: session.unresolvedQuestions.at(-1), ready: false, middleware: [gapEvent] };
   }
 
   private async planNext(session: InterviewSession, priorMiddleware: MiddlewareExecution[]): Promise<InterviewStepResult> {
@@ -305,6 +356,10 @@ function notReady(reason: string, blockingGaps: string[], unresolvedContradictio
 
 function cloneSession(session: InterviewSession): InterviewSession {
   return structuredClone(session);
+}
+
+function externalGapId(input: ExternalInterviewGapInput): string {
+  return `${input.source}.${input.id}`;
 }
 
 function randomId(): string {

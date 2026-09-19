@@ -17,14 +17,28 @@ export interface OpenSpecCreateChangeInput {
   schema?: string;
 }
 
+export type OpenSpecArtifactAuthority = "workflow" | "compatibility";
+
+export type OpenSpecArtifactState = "pending" | "ready" | "blocked" | "complete" | "unknown";
+
 export interface OpenSpecArtifact {
   id: string;
   path: string;
   status?: string;
+  state: OpenSpecArtifactState;
+  authority: OpenSpecArtifactAuthority;
   dependencies?: string[];
   instructions?: unknown;
   template?: string;
   metadata?: Record<string, unknown>;
+  raw?: unknown;
+}
+
+export interface OpenSpecValidationFinding {
+  artifactId?: string;
+  path?: string;
+  message: string;
+  code?: string;
   raw?: unknown;
 }
 
@@ -65,6 +79,7 @@ export interface SpecContext {
 export interface OpenSpecValidation {
   valid: boolean;
   exitCode: number;
+  findings: OpenSpecValidationFinding[];
   raw?: unknown;
   stdout: string;
   stderr: string;

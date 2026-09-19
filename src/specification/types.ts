@@ -3,7 +3,7 @@ import type { MiddlewareExecution } from "../middleware/types.ts";
 import type { ModelPort } from "../model/types.ts";
 import type { OpenSpecArtifact, OpenSpecGateway, OpenSpecValidation } from "../openspec/types.ts";
 import type { InterviewEngine } from "../interview/interview-engine.ts";
-import type { InterviewFact, InterviewSession } from "../interview/types.ts";
+import type { AddExternalGapsInput, InterviewFact, InterviewSession, InterviewStepResult } from "../interview/types.ts";
 
 export type GenerationMode = "create" | "revise";
 
@@ -75,6 +75,11 @@ export interface ReviewState {
   latest?: SpecReview;
 }
 
+export interface ValidationState {
+  latest?: OpenSpecValidation;
+  repairAttempts: number;
+}
+
 export type SpecificationWorkflowStatus =
   | "interview"
   | "generating"
@@ -90,7 +95,7 @@ export interface SpecificationWorkflowState {
   changeName: string;
   interview: InterviewSession;
   generation: GenerationState;
-  validation?: OpenSpecValidation;
+  validation: ValidationState;
   review: ReviewState;
   status: SpecificationWorkflowStatus;
   failure?: {
@@ -126,11 +131,16 @@ export interface AnswerSpecificationWorkflowInput {
 
 export interface SpecificationWorkflowOptions {
   maxGenerationIterations?: number;
+  maxValidationRepairIterations?: number;
   maxReviewIterations?: number;
 }
 
+export interface InterviewGapRegistrar {
+  addExternalGaps(input: AddExternalGapsInput): Promise<InterviewStepResult>;
+}
+
 export interface SpecificationWorkflowDependencies {
-  interviewEngine: InterviewEngine;
+  interviewEngine: InterviewEngine & InterviewGapRegistrar;
   openSpecGateway: OpenSpecGateway;
   artifactGenerator: ArtifactGenerator;
   artifactWriter: ArtifactWriter;
@@ -146,14 +156,6 @@ export interface ModelArtifactGeneratorConfig {
 export interface ModelSpecReviewerConfig {
   model: string;
   parameters?: Parameters<ModelPort["complete"]>[0]["parameters"];
-}
-
-export type ReviewGapSource = "review" | "validation";
-
-export interface ExternalGapInput {
-  source: ReviewGapSource;
-  finding: ReviewFinding;
-  recordedAt: string;
 }
 
 export interface ActiveInterviewFact extends InterviewFact {

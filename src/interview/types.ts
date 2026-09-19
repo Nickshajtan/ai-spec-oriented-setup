@@ -129,6 +129,20 @@ export interface AnswerInterviewInput {
   rejectedAssumptionIds?: string[];
 }
 
+export interface ExternalInterviewGapInput {
+  id: string;
+  source: "review" | "validation";
+  reason: string;
+  artifactId?: string;
+  suggestedQuestion?: string;
+  issue?: string;
+}
+
+export interface AddExternalGapsInput {
+  session: InterviewSession;
+  gaps: ExternalInterviewGapInput[];
+}
+
 export interface InterviewStepResult {
   session: InterviewSession;
   question?: InterviewQuestion;

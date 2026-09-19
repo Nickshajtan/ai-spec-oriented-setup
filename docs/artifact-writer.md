@@ -35,7 +35,8 @@ If a file already exists, the writer returns a `conflict` result unless `overwri
 `NodeArtifactWriter`:
 
 - resolves paths relative to `projectRoot`;
-- rejects absolute paths and traversal outside `projectRoot`;
+- accepts project-relative paths and absolute OpenSpec-resolved paths only when they stay inside `projectRoot`;
+- rejects traversal outside `projectRoot`;
 - creates parent directories;
 - writes UTF-8 text through a temporary file then rename;
 - emits semantic middleware events.

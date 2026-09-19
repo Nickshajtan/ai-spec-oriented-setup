@@ -28,7 +28,7 @@ async function fixtureProject(): Promise<string> {
 
 test("validate uses verified OpenSpec CLI command and preserves raw output", async () => {
   const projectRoot = await fixtureProject();
-  const raw = { items: [{ id: "add-health-check", valid: true }] };
+  const raw = { items: [{ id: "add-health-check", valid: true, message: "ok" }] };
   const runner = new FakeProcessRunner({ exitCode: 0, stdout: JSON.stringify(raw), stderr: "" });
   const bus = new MiddlewareBus();
   const events: string[] = [];
@@ -56,6 +56,7 @@ test("validate uses verified OpenSpec CLI command and preserves raw output", asy
   assert.equal(result.ok, true);
   assert.equal(result.status, "valid");
   assert.deepEqual(result.context?.openspec.validation?.raw, raw);
+  assert.deepEqual(result.context?.openspec.validation?.findings, [{ message: "ok", raw: raw.items[0] }]);
   assert.deepEqual(events, ["openspec.validate.before", "openspec.validate.after"]);
   assert.deepEqual(runner.calls[0]?.args, ["validate", "add-health-check", "--json", "--no-interactive"]);
 });
@@ -82,6 +83,8 @@ test("status normalizes generic artifacts without standard artifact assumptions"
   assert.equal(result.status, "status-read");
   assert.deepEqual(result.context?.openspec.status?.raw, raw);
   assert.equal(result.context?.openspec.artifacts[0]?.id, "capability-brief");
+  assert.equal(result.context?.openspec.artifacts[0]?.authority, "workflow");
+  assert.equal(result.context?.openspec.artifacts[0]?.state, "pending");
   assert.deepEqual(result.context?.openspec.artifacts[0]?.dependencies, ["context-note"]);
   assert.deepEqual(result.context?.openspec.metadata, { schema: "custom-flow" });
   assert.deepEqual(runner.calls[0]?.args, ["status", "--change", "add-health-check", "--json"]);
@@ -105,8 +108,29 @@ test("instructions preserve raw structured information and merge generic artifac
   assert.equal(result.status, "instructions-read");
   assert.deepEqual(result.context?.openspec.instructions?.raw, raw);
   assert.equal(result.context?.openspec.artifacts[0]?.id, "acceptance-matrix");
+  assert.equal(result.context?.openspec.artifacts[0]?.authority, "workflow");
   assert.deepEqual(result.context?.openspec.artifacts[0]?.dependencies, ["capability-brief"]);
   assert.deepEqual(runner.calls[0]?.args, ["instructions", "--change", "add-health-check", "--json"]);
+});
+
+test("compatibility artifact discoveries are separated from workflow authority", async () => {
+  const projectRoot = await fixtureProject();
+  const raw = {
+    nested: {
+      inferred: {
+        id: "legacy-note",
+        path: "openspec/changes/add-health-check/legacy.md",
+        status: "complete",
+      },
+    },
+  };
+  const runner = new FakeProcessRunner({ exitCode: 0, stdout: JSON.stringify(raw), stderr: "" });
+
+  const result = await new CliOpenSpecGateway({ processRunner: runner }).getStatus({ projectRoot, changeName: "add-health-check" });
+
+  const legacy = result.context?.openspec.artifacts.find((artifact) => artifact.id === "legacy-note");
+  assert.equal(legacy?.authority, "compatibility");
+  assert.equal(legacy?.state, "complete");
 });
 
 test("create change uses verified openspec new change command", async () => {

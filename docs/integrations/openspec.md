@@ -18,6 +18,8 @@ openspec instructions <artifact-id> --change <change-name> --json
 openspec validate <change-name> --json --no-interactive
 ```
 
+CI installs `@fission-ai/openspec@1.12.0` for the real smoke test and fails if that CLI is unavailable or if the machine-readable contract changes.
+
 ## API Example
 
 ```ts

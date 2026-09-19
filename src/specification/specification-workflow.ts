@@ -1,10 +1,9 @@
 import { MiddlewareBus } from "../bus.ts";
 import type { MiddlewareExecution } from "../middleware/types.ts";
-import type { OpenSpecArtifact, OpenSpecGatewayResult, OpenSpecValidation } from "../openspec/types.ts";
+import type { OpenSpecArtifact, OpenSpecValidation, OpenSpecValidationFinding } from "../openspec/types.ts";
 import type {
   AnswerSpecificationWorkflowInput,
   ArtifactGenerator,
-  ExternalGapInput,
   GeneratedArtifactContext,
   GenerationMode,
   ReviewFinding,
@@ -17,12 +16,14 @@ import type {
 } from "./types.ts";
 
 const DEFAULT_MAX_GENERATION_ITERATIONS = 20;
+const DEFAULT_MAX_VALIDATION_REPAIR_ITERATIONS = 3;
 const DEFAULT_MAX_REVIEW_ITERATIONS = 3;
 
 export class SpecificationWorkflow {
   private readonly dependencies: SpecificationWorkflowDependencies;
   private readonly bus: MiddlewareBus;
   private readonly maxGenerationIterations: number;
+  private readonly maxValidationRepairIterations: number;
   private readonly maxReviewIterations: number;
   private readonly clock: () => Date;
 
@@ -30,6 +31,7 @@ export class SpecificationWorkflow {
     this.dependencies = dependencies;
     this.bus = options.bus ?? new MiddlewareBus();
     this.maxGenerationIterations = options.maxGenerationIterations ?? DEFAULT_MAX_GENERATION_ITERATIONS;
+    this.maxValidationRepairIterations = options.maxValidationRepairIterations ?? DEFAULT_MAX_VALIDATION_REPAIR_ITERATIONS;
     this.maxReviewIterations = options.maxReviewIterations ?? DEFAULT_MAX_REVIEW_ITERATIONS;
     this.clock = options.clock ?? (() => new Date());
   }
@@ -41,6 +43,7 @@ export class SpecificationWorkflow {
       changeName: input.changeName,
       interview: interview.session,
       generation: { artifacts: [], attempts: 0 },
+      validation: { repairAttempts: 0 },
       review: { attempts: [] },
       status: interview.ready ? "generating" : "needs-input",
     };
@@ -83,23 +86,11 @@ export class SpecificationWorkflow {
 
       const validation = await this.validate(state, middleware);
       if (!validation.ok) return result(state, middleware, false);
-      if (!state.validation?.valid) {
-        const findings = validationFindings(state.validation, state.generation.artifacts);
-        if (state.review.attempts.length >= this.maxReviewIterations) {
-          return this.fail(state, middleware, "review-iteration-limit", "Validation repair limit reached.");
-        }
-        forceRevisionIds = affectedArtifactsFromFindings(findings, state.generation.artifacts);
-        if (forceRevisionIds.length === 0) {
-          this.reopenInterview(state, {
-            source: "validation",
-            finding: findings[0] ?? fallbackFinding("validation-input", "OpenSpec validation requires human input."),
-            recordedAt: this.now(),
-          });
-          const reopened = await this.emit("interview.reopened", state, { source: "validation" });
-          middleware.push(reopened);
-          state.status = "needs-input";
-          return result(state, middleware, false);
-        }
+      if (!state.validation.latest?.valid) {
+        const validationResponse = await this.handleValidationFailure(state, middleware);
+        if (!validationResponse.ok) return result(state, middleware, false);
+        if (validationResponse.needsInput) return result(state, middleware, false);
+        forceRevisionIds = validationResponse.revisionArtifactIds;
         state.status = "needs-revision";
         continue;
       }
@@ -123,11 +114,7 @@ export class SpecificationWorkflow {
       }
 
       if (latest.verdict === "needs_input") {
-        this.reopenInterview(state, {
-          source: "review",
-          finding: firstMaterialFinding(latest) ?? fallbackFinding("review-input", "Review requires human input."),
-          recordedAt: this.now(),
-        });
+        await this.reopenInterview(state, latest.findings.filter((finding) => finding.severity === "error"), "review", middleware);
         middleware.push(await this.emit("interview.reopened", state, { review: latest }));
         state.status = "needs-input";
         return result(state, middleware, false);
@@ -176,7 +163,11 @@ export class SpecificationWorkflow {
       const artifactResult = await this.generateOneArtifact(state, nextArtifact, mode, middleware);
       if (!artifactResult.ok) return { ok: false };
       revisionIds.delete(nextArtifact.id);
-      if (revisionIds.size === 0 && mode === "revise") return { ok: true };
+      if (mode === "revise") {
+        for (const dependentArtifactId of downstreamGeneratedArtifactIds(nextArtifact.id, status.context.openspec.artifacts, state.generation.artifacts)) {
+          revisionIds.add(dependentArtifactId);
+        }
+      }
     }
   }
 
@@ -201,8 +192,10 @@ export class SpecificationWorkflow {
 
     const instructionArtifact = matchingArtifact(instructionsResult.context.openspec.artifacts, statusArtifact.id);
     const artifact = { ...statusArtifact, ...(instructionArtifact ?? {}) };
-    const currentContent = mode === "revise" ? await this.readOptional(state, artifact.path) : undefined;
-    const dependencies = await this.readDependencies(state, artifact);
+    const currentContent = mode === "revise" ? await this.readOptional(state, artifact.path, middleware) : undefined;
+    if (state.status === "failed") return { ok: false };
+    const dependencies = await this.readDependencies(state, artifact, middleware);
+    if (state.status === "failed") return { ok: false };
     let generated;
     try {
       generated = await this.dependencies.artifactGenerator.generate({
@@ -250,13 +243,51 @@ export class SpecificationWorkflow {
       await this.fail(state, middleware, "openspec-validation", validation.error?.message ?? "OpenSpec validation did not return validation context.", validation.error);
       return { ok: false };
     }
-    state.validation = validation.context.openspec.validation;
-    middleware.push(await this.emit("openspec.validation.completed", state, { validation: state.validation }));
+    state.validation.latest = validation.context.openspec.validation;
+    middleware.push(await this.emit("openspec.validation.completed", state, { validation: state.validation.latest }));
     return { ok: true };
   }
 
+  private async handleValidationFailure(
+    state: SpecificationWorkflowState,
+    middleware: MiddlewareExecution[],
+  ): Promise<{ ok: true; needsInput: boolean; revisionArtifactIds: string[] } | { ok: false }> {
+    const findings = validationFindings(state.validation.latest);
+    const inputFindings = findings.filter((finding) => finding.category === "missing-requirement" || finding.suggestedQuestion);
+    if (inputFindings.length > 0) {
+      await this.reopenInterview(state, inputFindings, "validation", middleware);
+      middleware.push(await this.emit("interview.reopened", state, { source: "validation" }));
+      state.status = "needs-input";
+      return { ok: true, needsInput: true, revisionArtifactIds: [] };
+    }
+
+    if (state.validation.repairAttempts >= this.maxValidationRepairIterations) {
+      await this.fail(state, middleware, "validation-repair-limit", "Maximum validation repair attempts reached.");
+      return { ok: false };
+    }
+
+    const status = await this.dependencies.openSpecGateway.getStatus(state);
+    if (!status.ok || !status.context) {
+      await this.fail(state, middleware, "openspec-status-validation-repair", status.error?.message ?? "OpenSpec status failed during validation repair.", status.error);
+      return { ok: false };
+    }
+
+    const revisionArtifactIds = targetArtifactsFromValidation(
+      state.validation.latest,
+      state.generation.artifacts,
+      status.context.openspec.artifacts.filter((artifact) => artifact.authority === "workflow"),
+    );
+    if (revisionArtifactIds.length === 0) {
+      await this.fail(state, middleware, "validation-target-unknown", "OpenSpec validation failed without a deterministic artifact target.");
+      return { ok: false };
+    }
+
+    state.validation.repairAttempts += 1;
+    return { ok: true, needsInput: false, revisionArtifactIds };
+  }
+
   private async review(state: SpecificationWorkflowState, middleware: MiddlewareExecution[]): Promise<{ ok: boolean }> {
-    if (!state.validation?.valid) {
+    if (!state.validation.latest?.valid) {
       await this.fail(state, middleware, "review-before-validation", "Review cannot run before valid OpenSpec validation.");
       return { ok: false };
     }
@@ -264,6 +295,20 @@ export class SpecificationWorkflow {
     middleware.push(await this.emit("review.started", state, undefined, { reviewIteration: state.review.attempts.length + 1 }));
     const status = await this.dependencies.openSpecGateway.getStatus(state);
     const instructions = await this.dependencies.openSpecGateway.getInstructions(state);
+    if (!status.ok || !status.context) {
+      await this.fail(state, middleware, "openspec-status-before-review", status.error?.message ?? "OpenSpec status failed before review.", status.error);
+      return { ok: false };
+    }
+    if (!instructions.ok || !instructions.context) {
+      await this.fail(
+        state,
+        middleware,
+        "openspec-instructions-before-review",
+        instructions.error?.message ?? "OpenSpec instructions failed before review.",
+        instructions.error,
+      );
+      return { ok: false };
+    }
     let review;
     try {
       review = await this.dependencies.reviewer.review({
@@ -273,7 +318,7 @@ export class SpecificationWorkflow {
         artifacts: state.generation.artifacts,
         status: status.context?.openspec.status?.raw,
         instructions: instructions.context?.openspec.instructions?.raw,
-        validation: state.validation,
+        validation: state.validation.latest,
       });
     } catch (error) {
       await this.fail(state, middleware, "spec-review", error instanceof Error ? error.message : "Spec review failed.", error);
@@ -288,48 +333,59 @@ export class SpecificationWorkflow {
     return { ok: true };
   }
 
-  private async readDependencies(state: SpecificationWorkflowState, artifact: OpenSpecArtifact): Promise<GeneratedArtifactContext[]> {
+  private async readDependencies(
+    state: SpecificationWorkflowState,
+    artifact: OpenSpecArtifact,
+    middleware: MiddlewareExecution[],
+  ): Promise<GeneratedArtifactContext[]> {
     const dependencyIds = new Set(artifact.dependencies ?? []);
     const dependencies = state.generation.artifacts.filter((generated) => dependencyIds.has(generated.artifactId));
-    return Promise.all(
-      dependencies.map(async (dependency) => {
-        const read = await this.dependencies.artifactReader.read({ projectRoot: state.projectRoot, path: dependency.path });
-        return { ...dependency, content: read.ok && read.content !== undefined ? read.content : dependency.content };
-      }),
-    );
+    const readDependencies: GeneratedArtifactContext[] = [];
+    for (const dependency of dependencies) {
+      const read = await this.dependencies.artifactReader.read({ projectRoot: state.projectRoot, path: dependency.path });
+      if (!read.ok || read.content === undefined) {
+        await this.fail(state, middleware, `artifact-read-${read.status}`, read.error?.message ?? "Dependency artifact read failed.", read.error);
+        return [];
+      }
+      readDependencies.push({ ...dependency, content: read.content });
+    }
+    return readDependencies;
   }
 
-  private async readOptional(state: SpecificationWorkflowState, artifactPath: string): Promise<string | undefined> {
+  private async readOptional(
+    state: SpecificationWorkflowState,
+    artifactPath: string,
+    middleware: MiddlewareExecution[],
+  ): Promise<string | undefined> {
     const read = await this.dependencies.artifactReader.read({ projectRoot: state.projectRoot, path: artifactPath });
-    return read.ok ? read.content : undefined;
+    if (read.status === "not-found") return undefined;
+    if (!read.ok) {
+      await this.fail(state, middleware, `artifact-read-${read.status}`, read.error?.message ?? "Artifact read failed.", read.error);
+      return undefined;
+    }
+    return read.content;
   }
 
-  private reopenInterview(state: SpecificationWorkflowState, input: ExternalGapInput): void {
-    const gapId = `${input.source}.${input.finding.id}`;
-    const question = {
-      id: `question-${gapId}`,
-      text: input.finding.suggestedQuestion ?? input.finding.issue,
-      why: input.finding.reason,
-      gapId,
-      askedAt: input.recordedAt,
-    };
-    state.interview.gaps.push({
-      id: gapId,
-      source: input.source,
-      reason: input.finding.reason,
-      artifactId: input.finding.artifactId,
-      suggestedQuestion: input.finding.suggestedQuestion,
-      status: "open",
-      provenance: { source: input.source, recordedAt: input.recordedAt, detail: input.finding.issue },
+  private async reopenInterview(
+    state: SpecificationWorkflowState,
+    findings: ReviewFinding[],
+    source: "review" | "validation",
+    middleware: MiddlewareExecution[],
+  ): Promise<void> {
+    const materialFindings = findings.length ? findings : [fallbackFinding(`${source}-input`, `${source} requires human input.`)];
+    const reopened = await this.dependencies.interviewEngine.addExternalGaps({
+      session: state.interview,
+      gaps: materialFindings.map((finding) => ({
+        id: finding.id,
+        source,
+        reason: finding.reason,
+        artifactId: finding.artifactId,
+        suggestedQuestion: finding.suggestedQuestion,
+        issue: finding.issue,
+      })),
     });
-    state.interview.questions.push(question);
-    state.interview.unresolvedQuestions.push(question);
-    state.interview.readiness = {
-      ready: false,
-      reason: input.finding.reason,
-      blockingGaps: [gapId],
-      unresolvedContradictions: state.interview.readiness.unresolvedContradictions,
-    };
+    state.interview = reopened.session;
+    middleware.push(...reopened.middleware);
   }
 
   private async fail(
@@ -372,22 +428,34 @@ function nextArtifactForGeneration(
   generated: GeneratedArtifactContext[],
   revisionIds: Set<string>,
 ): OpenSpecArtifact | undefined {
-  const authoritative = artifacts.filter(isWorkflowAuthoritativeArtifact);
+  const authoritative = artifacts.filter((artifact) => artifact.authority === "workflow");
   const revision = authoritative.find((artifact) => revisionIds.has(artifact.id));
   if (revision) return revision;
-  return authoritative.find((artifact) => !isCompleteStatus(artifact.status));
-}
-
-function isWorkflowAuthoritativeArtifact(artifact: OpenSpecArtifact): boolean {
-  return artifact.metadata?.normalization === "documented" && Boolean(artifact.id && artifact.path);
-}
-
-function isCompleteStatus(status: string | undefined): boolean {
-  return status === "complete" || status === "completed" || status === "ready" || status === "valid" || status === "done" || status === "written";
+  return authoritative.find((artifact) => artifact.state !== "complete");
 }
 
 function matchingArtifact(artifacts: OpenSpecArtifact[], artifactId: string): OpenSpecArtifact | undefined {
   return artifacts.find((artifact) => artifact.id === artifactId);
+}
+
+function downstreamGeneratedArtifactIds(
+  artifactId: string,
+  artifacts: OpenSpecArtifact[],
+  generated: GeneratedArtifactContext[],
+): string[] {
+  const generatedIds = new Set(generated.map((artifact) => artifact.artifactId));
+  const downstream = new Set<string>();
+  const queue = [artifactId];
+  while (queue.length > 0) {
+    const current = queue.shift();
+    if (!current) continue;
+    for (const artifact of artifacts) {
+      if (!artifact.dependencies?.includes(current) || downstream.has(artifact.id)) continue;
+      if (generatedIds.has(artifact.id)) downstream.add(artifact.id);
+      queue.push(artifact.id);
+    }
+  }
+  return [...downstream];
 }
 
 function upsertGeneratedArtifact(artifacts: GeneratedArtifactContext[], artifact: GeneratedArtifactContext): void {
@@ -406,21 +474,35 @@ function affectedArtifactsFromFindings(findings: ReviewFinding[], fallbackArtifa
   return fallbackArtifacts[0] ? [fallbackArtifacts[0].artifactId] : [];
 }
 
-function firstMaterialFinding(review: SpecReview): ReviewFinding | undefined {
-  return review.findings.find((finding) => finding.severity === "error") ?? review.findings[0];
+function validationFindings(validation: OpenSpecValidation | undefined): ReviewFinding[] {
+  const findings = validation?.findings ?? [];
+  if (findings.length === 0) return [fallbackFinding("openspec-validation", validation?.stderr || validation?.stdout || "OpenSpec validation failed.")];
+  return findings.map((finding, index) => ({
+    id: finding.code ?? finding.artifactId ?? finding.path ?? `openspec-validation-${index + 1}`,
+    severity: "error",
+    artifactId: finding.artifactId,
+    issue: "OpenSpec validation failed.",
+    reason: finding.message,
+    category: "openspec-compliance",
+  }));
 }
 
-function validationFindings(validation: OpenSpecValidation | undefined, artifacts: GeneratedArtifactContext[]): ReviewFinding[] {
-  return [
-    {
-      id: "openspec-validation",
-      severity: "error",
-      artifactId: artifacts[0]?.artifactId,
-      issue: "OpenSpec validation failed.",
-      reason: validation?.stderr || validation?.stdout || "OpenSpec reported the change is invalid.",
-      category: "openspec-compliance",
-    },
-  ];
+function targetArtifactsFromValidation(
+  validation: OpenSpecValidation | undefined,
+  artifacts: GeneratedArtifactContext[],
+  openspecArtifacts: OpenSpecArtifact[],
+): string[] {
+  const targets = new Set<string>();
+  for (const finding of validation?.findings ?? []) {
+    if (finding.artifactId) targets.add(finding.artifactId);
+    if (finding.path) {
+      const generated = artifacts.find((candidate) => normalizePath(candidate.path) === normalizePath(finding.path ?? ""));
+      if (generated) targets.add(generated.artifactId);
+      const openspec = openspecArtifacts.find((candidate) => normalizePath(candidate.path) === normalizePath(finding.path ?? ""));
+      if (openspec) targets.add(openspec.id);
+    }
+  }
+  return [...targets];
 }
 
 function fallbackFinding(id: string, reason: string): ReviewFinding {
@@ -428,7 +510,7 @@ function fallbackFinding(id: string, reason: string): ReviewFinding {
 }
 
 function readyInvariantHolds(state: SpecificationWorkflowState): boolean {
-  return state.interview.readiness.ready && state.validation?.valid === true && state.review.latest?.verdict === "pass";
+  return state.interview.readiness.ready && state.validation.latest?.valid === true && state.review.latest?.verdict === "pass";
 }
 
 function result(
@@ -447,4 +529,8 @@ function result(
 
 function cloneState(state: SpecificationWorkflowState): SpecificationWorkflowState {
   return structuredClone(state);
+}
+
+function normalizePath(filePath: string): string {
+  return filePath.replace(/\\/g, "/");
 }

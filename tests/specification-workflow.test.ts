@@ -187,6 +187,175 @@ test("guards review iteration limits and malformed review output", async () => {
   assert.equal(malformed.state.failure?.code, "spec-review");
 });
 
+test("validation repair targets diagnostics and never guesses the first artifact", async () => {
+  const gateway = new FakeOpenSpecGateway(
+    [
+      [artifact("intent", "openspec/changes/custom/intent.md", "complete"), artifact("implementation-plan", "openspec/changes/custom/plan.md", "complete")],
+      [artifact("intent", "openspec/changes/custom/intent.md", "complete"), artifact("implementation-plan", "openspec/changes/custom/plan.md", "complete")],
+    ],
+    [false, true],
+  );
+  gateway.validate = async function validate() {
+    const valid = this.validationCalls > 0;
+    this.validationCalls += 1;
+    return ok(this.statuses.at(-1) ?? [], {
+      valid,
+      exitCode: valid ? 0 : 1,
+      findings: valid ? [] : [{ path: "openspec/changes/custom/plan.md", message: "Plan is structurally invalid." }],
+      stdout: "{}",
+      stderr: "",
+      raw: { valid },
+    });
+  };
+  const store = new MemoryArtifacts();
+  store.files.set("openspec/changes/custom/intent.md", "intent");
+  store.files.set("openspec/changes/custom/plan.md", "plan");
+  const generator = new QueueGenerator(["plan fixed"]);
+
+  const result = await workflow(gateway, store, generator, new QueueReviewer([{ verdict: "pass", findings: [] }])).start(startInput());
+
+  assert.equal(result.status, "ready");
+  assert.deepEqual(generator.calls.map((call) => `${call.mode}:${call.artifact.id}`), ["revise:implementation-plan"]);
+  assert.equal(store.files.get("openspec/changes/custom/intent.md"), "intent");
+});
+
+test("validation failure without deterministic target fails non-ready", async () => {
+  const gateway = new FakeOpenSpecGateway([[artifact("intent", "openspec/changes/custom/intent.md", "complete")]], [false]);
+  gateway.validate = async function validate() {
+    this.validationCalls += 1;
+    return ok(this.statuses.at(-1) ?? [], {
+      valid: false,
+      exitCode: 1,
+      findings: [{ message: "Unknown structural error." }],
+      stdout: "{}",
+      stderr: "",
+      raw: { valid: false },
+    });
+  };
+
+  const result = await workflow(gateway, new MemoryArtifacts(), new QueueGenerator([]), new QueueReviewer([])).start(startInput());
+
+  assert.equal(result.status, "failed");
+  assert.equal(result.state.failure?.code, "validation-target-unknown");
+});
+
+test("multiple needs_input findings become deduplicated interview gaps", async () => {
+  const gateway = new FakeOpenSpecGateway([
+    [artifact("intent", "openspec/changes/custom/intent.md", "missing")],
+    [artifact("intent", "openspec/changes/custom/intent.md", "complete")],
+  ]);
+  const reviewer = new QueueReviewer([
+    {
+      verdict: "needs_input",
+      findings: [
+        { id: "runtime", severity: "error", artifactId: "intent", issue: "Runtime missing.", reason: "Runtime matters.", suggestedQuestion: "Where will this run?" },
+        { id: "scale", severity: "error", artifactId: "intent", issue: "Scale missing.", reason: "Scale matters.", suggestedQuestion: "What scale is required?" },
+        { id: "runtime", severity: "error", artifactId: "intent", issue: "Runtime missing.", reason: "Runtime matters.", suggestedQuestion: "Where will this run?" },
+      ],
+    },
+  ]);
+
+  const blocked = await workflow(gateway, new MemoryArtifacts(), new QueueGenerator(["intent"]), reviewer).start(startInput());
+
+  assert.equal(blocked.status, "needs-input");
+  assert.deepEqual(blocked.state.interview.gaps.map((gap) => gap.id), ["review.runtime", "review.scale"]);
+  assert.equal(blocked.state.interview.unresolvedQuestions.length, 2);
+});
+
+test("revising a dependency reconsiders downstream generated artifacts only", async () => {
+  const gateway = new FakeOpenSpecGateway([
+    [
+      artifact("intent", "openspec/changes/custom/intent.md", "missing"),
+      artifact("architecture-note", "openspec/changes/custom/architecture.md", "missing", ["intent"]),
+      artifact("implementation-plan", "openspec/changes/custom/plan.md", "missing", ["architecture-note"]),
+      artifact("unrelated", "openspec/changes/custom/unrelated.md", "missing"),
+    ],
+    [
+      artifact("intent", "openspec/changes/custom/intent.md", "complete"),
+      artifact("architecture-note", "openspec/changes/custom/architecture.md", "missing", ["intent"]),
+      artifact("implementation-plan", "openspec/changes/custom/plan.md", "missing", ["architecture-note"]),
+      artifact("unrelated", "openspec/changes/custom/unrelated.md", "missing"),
+    ],
+    [
+      artifact("intent", "openspec/changes/custom/intent.md", "complete"),
+      artifact("architecture-note", "openspec/changes/custom/architecture.md", "complete", ["intent"]),
+      artifact("implementation-plan", "openspec/changes/custom/plan.md", "missing", ["architecture-note"]),
+      artifact("unrelated", "openspec/changes/custom/unrelated.md", "missing"),
+    ],
+    [
+      artifact("intent", "openspec/changes/custom/intent.md", "complete"),
+      artifact("architecture-note", "openspec/changes/custom/architecture.md", "complete", ["intent"]),
+      artifact("implementation-plan", "openspec/changes/custom/plan.md", "complete", ["architecture-note"]),
+      artifact("unrelated", "openspec/changes/custom/unrelated.md", "missing"),
+    ],
+    [
+      artifact("intent", "openspec/changes/custom/intent.md", "complete"),
+      artifact("architecture-note", "openspec/changes/custom/architecture.md", "complete", ["intent"]),
+      artifact("implementation-plan", "openspec/changes/custom/plan.md", "complete", ["architecture-note"]),
+      artifact("unrelated", "openspec/changes/custom/unrelated.md", "complete"),
+    ],
+  ]);
+  const generator = new QueueGenerator(["intent", "architecture", "plan", "unrelated", "intent revised", "architecture revised", "plan revised"]);
+  const reviewer = new QueueReviewer([
+    { verdict: "needs_revision", findings: [{ id: "intent", severity: "error", artifactId: "intent", issue: "Intent stale.", reason: "Known information was omitted." }] },
+    { verdict: "pass", findings: [] },
+  ]);
+
+  const result = await workflow(gateway, new MemoryArtifacts(), generator, reviewer).start(startInput());
+
+  assert.equal(result.status, "ready");
+  assert.deepEqual(generator.calls.map((call) => `${call.mode}:${call.artifact.id}`), [
+    "create:intent",
+    "create:architecture-note",
+    "create:implementation-plan",
+    "create:unrelated",
+    "revise:intent",
+    "revise:architecture-note",
+    "revise:implementation-plan",
+  ]);
+});
+
+test("OpenSpec status or instructions failures before review block reviewer invocation", async () => {
+  const statusGateway = new FakeOpenSpecGateway([[artifact("intent", "openspec/changes/custom/intent.md", "missing")], [artifact("intent", "openspec/changes/custom/intent.md", "complete")]]);
+  statusGateway.failStatusBeforeReview = true;
+  const statusReviewer = new QueueReviewer([{ verdict: "pass", findings: [] }]);
+  const statusResult = await workflow(statusGateway, new MemoryArtifacts(), new QueueGenerator(["intent"]), statusReviewer).start(startInput());
+
+  assert.equal(statusResult.status, "failed");
+  assert.equal(statusResult.state.failure?.code, "openspec-status-before-review");
+  assert.equal(statusReviewer.calls.length, 0);
+
+  const instructionsGateway = new FakeOpenSpecGateway([[artifact("intent", "openspec/changes/custom/intent.md", "missing")], [artifact("intent", "openspec/changes/custom/intent.md", "complete")]]);
+  instructionsGateway.failInstructionsBeforeReview = true;
+  const instructionsReviewer = new QueueReviewer([{ verdict: "pass", findings: [] }]);
+  const instructionsResult = await workflow(instructionsGateway, new MemoryArtifacts(), new QueueGenerator(["intent"]), instructionsReviewer).start(startInput());
+
+  assert.equal(instructionsResult.status, "failed");
+  assert.equal(instructionsResult.state.failure?.code, "openspec-instructions-before-review");
+  assert.equal(instructionsReviewer.calls.length, 0);
+});
+
+test("dependency path-rejected and read-failed fail safely without cached fallback", async () => {
+  for (const failureStatus of ["path-rejected", "read-failed"] as const) {
+    const store = new MemoryArtifacts();
+    const dependencyPath = "openspec/changes/custom/intent.md";
+    store.readFailures.set(dependencyPath, failureStatus);
+    store.readFailureAfterReads.set(dependencyPath, 1);
+    const result = await workflow(
+      new FakeOpenSpecGateway([
+        [artifact("intent", dependencyPath, "missing"), artifact("architecture-note", "openspec/changes/custom/architecture.md", "missing", ["intent"])],
+        [artifact("intent", dependencyPath, "complete"), artifact("architecture-note", "openspec/changes/custom/architecture.md", "missing", ["intent"])],
+      ]),
+      store,
+      new QueueGenerator(["intent", "architecture"]),
+      new QueueReviewer([{ verdict: "pass", findings: [] }]),
+    ).start(startInput());
+
+    assert.equal(result.status, "failed");
+    assert.equal(result.state.failure?.code, `artifact-read-${failureStatus}`);
+  }
+});
+
 test("model generator and reviewer use separate fresh model requests", async () => {
   const { ModelArtifactGenerator, ModelSpecReviewer } = await import("../src/index.ts");
   const model = new RecordingModel(["artifact body", JSON.stringify({ verdict: "pass", findings: [] })]);
@@ -207,7 +376,7 @@ test("model generator and reviewer use separate fresh model requests", async () 
     artifacts: [{ artifactId: "intent", path: "intent.md", content: "artifact body" }],
     status: {},
     instructions: {},
-    validation: { valid: true, exitCode: 0, stdout: "{}", stderr: "", raw: {} },
+    validation: { valid: true, exitCode: 0, findings: [], stdout: "{}", stderr: "", raw: {} },
   });
 
   assert.equal(model.requests.length, 2);
@@ -221,7 +390,7 @@ function workflow(
   store: MemoryArtifacts,
   generator: QueueGenerator,
   reviewer: SpecReviewer,
-  options: { maxGenerationIterations?: number; maxReviewIterations?: number } = {},
+  options: { maxGenerationIterations?: number; maxValidationRepairIterations?: number; maxReviewIterations?: number } = {},
 ): SpecificationWorkflow {
   return new SpecificationWorkflow(
     {
@@ -249,9 +418,10 @@ function artifact(id: string, artifactPath: string, status: string, dependencies
     id,
     path: artifactPath,
     status,
+    state: status === "complete" ? "complete" : status === "blocked" ? "blocked" : "pending",
+    authority: "workflow",
     dependencies,
     instructions: { artifact: id },
-    metadata: { normalization: "documented" },
   };
 }
 
@@ -266,6 +436,7 @@ class FakeInterviewEngine {
     if (question) {
       question.answeredAt = "2026-09-18T00:00:00.000Z";
       session.unresolvedQuestions = [];
+      session.gaps = session.gaps.map((gap) => (gap.id === question.gapId ? { ...gap, status: "resolved" } : gap));
     }
     session.facts.push({
       id: `fact-${session.facts.length + 1}`,
@@ -276,6 +447,44 @@ class FakeInterviewEngine {
     session.readiness = { ready: true, reason: "External gap resolved.", blockingGaps: [], unresolvedContradictions: [] };
     return { session, ready: true, middleware: [] };
   }
+
+  async addExternalGaps(input: {
+    session: InterviewSession;
+    gaps: Array<{ id: string; source: "review" | "validation"; reason: string; artifactId?: string; suggestedQuestion?: string; issue?: string }>;
+  }) {
+    const session = structuredClone(input.session);
+    for (const gapInput of input.gaps) {
+      const gapId = `${gapInput.source}.${gapInput.id}`;
+      if (session.gaps.some((gap) => gap.id === gapId && gap.status === "open")) continue;
+      session.gaps.push({
+        id: gapId,
+        source: gapInput.source,
+        reason: gapInput.reason,
+        artifactId: gapInput.artifactId,
+        suggestedQuestion: gapInput.suggestedQuestion,
+        status: "open",
+        provenance: { source: gapInput.source, recordedAt: "2026-09-18T00:00:00.000Z", detail: gapInput.issue },
+      });
+      if (!session.unresolvedQuestions.some((question) => question.gapId === gapId)) {
+        const question = {
+          id: `question-${gapId}`,
+          text: gapInput.suggestedQuestion ?? gapInput.issue ?? gapInput.reason,
+          why: gapInput.reason,
+          gapId,
+          askedAt: "2026-09-18T00:00:00.000Z",
+        };
+        session.questions.push(question);
+        session.unresolvedQuestions.push(question);
+      }
+    }
+    session.readiness = {
+      ready: false,
+      reason: "Externally discovered material gaps must be resolved before proceeding.",
+      blockingGaps: session.gaps.filter((gap) => gap.status === "open").map((gap) => gap.id),
+      unresolvedContradictions: [],
+    };
+    return { session, question: session.unresolvedQuestions.at(-1), ready: false, middleware: [] };
+  }
 }
 
 class FakeOpenSpecGateway implements OpenSpecGateway {
@@ -283,6 +492,8 @@ class FakeOpenSpecGateway implements OpenSpecGateway {
   private statusIndex = 0;
   private readonly statuses: OpenSpecArtifact[][];
   private readonly validationResults: boolean[];
+  failStatusBeforeReview = false;
+  failInstructionsBeforeReview = false;
 
   constructor(statuses: OpenSpecArtifact[][], validationResults: boolean[] = [true]) {
     this.statuses = statuses;
@@ -294,12 +505,14 @@ class FakeOpenSpecGateway implements OpenSpecGateway {
   }
 
   async getStatus(): Promise<OpenSpecGatewayResult> {
+    if (this.failStatusBeforeReview && this.validationCalls > 0) return failure("status exploded");
     const current = this.statuses[Math.min(this.statusIndex, this.statuses.length - 1)] ?? [];
     this.statusIndex += 1;
     return ok(current);
   }
 
   async getInstructions(): Promise<OpenSpecGatewayResult> {
+    if (this.failInstructionsBeforeReview && this.validationCalls > 0) return failure("instructions exploded");
     return ok(this.statuses.at(-1) ?? []);
   }
 
@@ -311,13 +524,22 @@ class FakeOpenSpecGateway implements OpenSpecGateway {
   async validate(): Promise<OpenSpecGatewayResult> {
     const valid = this.validationResults[Math.min(this.validationCalls, this.validationResults.length - 1)] ?? true;
     this.validationCalls += 1;
-    return ok(this.statuses.at(-1) ?? [], { valid, exitCode: valid ? 0 : 1, stdout: valid ? "{}" : '{"valid":false}', stderr: valid ? "" : "invalid", raw: { valid } });
+    return ok(this.statuses.at(-1) ?? [], {
+      valid,
+      exitCode: valid ? 0 : 1,
+      findings: valid ? [] : [{ artifactId: "intent", message: "invalid", raw: { valid } }],
+      stdout: valid ? "{}" : '{"valid":false}',
+      stderr: valid ? "" : "invalid",
+      raw: { valid },
+    });
   }
 }
 
 class MemoryArtifacts implements ArtifactWriter, ArtifactReader {
   files = new Map<string, string>();
   writes: WriteArtifactInput[] = [];
+  readFailures = new Map<string, "path-rejected" | "read-failed">();
+  readFailureAfterReads = new Map<string, number>();
 
   async write(input: WriteArtifactInput) {
     this.writes.push({ ...input });
@@ -329,6 +551,12 @@ class MemoryArtifacts implements ArtifactWriter, ArtifactReader {
   }
 
   async read(input: { path: string }) {
+    const failureStatus = this.readFailures.get(input.path);
+    if (failureStatus) {
+      const remainingSuccessfulReads = this.readFailureAfterReads.get(input.path) ?? 0;
+      if (remainingSuccessfulReads <= 0) return { ok: false, status: failureStatus, error: { code: failureStatus, message: failureStatus } };
+      this.readFailureAfterReads.set(input.path, remainingSuccessfulReads - 1);
+    }
     const content = this.files.get(input.path);
     if (content === undefined) return { ok: false, status: "not-found" as const, error: { code: "not-found" as const, message: "missing" } };
     return { ok: true, status: "read" as const, path: input.path, absolutePath: input.path, content };
@@ -405,7 +633,7 @@ function readySession(input = startInput()): InterviewSession {
   };
 }
 
-function ok(artifacts: OpenSpecArtifact[], validation?: OpenSpecGatewayResult["context"]["openspec"]["validation"]): OpenSpecGatewayResult {
+function ok(artifacts: OpenSpecArtifact[], validation?: NonNullable<OpenSpecGatewayResult["context"]>["openspec"]["validation"]): OpenSpecGatewayResult {
   return {
     ok: validation?.valid ?? true,
     status: validation ? (validation.valid ? "valid" : "invalid") : "status-read",
@@ -420,6 +648,15 @@ function ok(artifacts: OpenSpecArtifact[], validation?: OpenSpecGatewayResult["c
         ...(validation ? { validation } : {}),
       },
     },
+    middleware: {},
+  };
+}
+
+function failure(message: string): OpenSpecGatewayResult {
+  return {
+    ok: false,
+    status: "command-failed",
+    error: { code: "command-failed", message },
     middleware: {},
   };
 }

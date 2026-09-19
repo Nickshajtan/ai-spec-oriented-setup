@@ -68,12 +68,12 @@ type ResolvedPath =
 
 function resolveArtifactPath(input: WriteArtifactInput): ResolvedPath {
   if (!input.projectRoot || !input.path) return { ok: false, status: "path-rejected", message: "projectRoot and path are required" };
-  if (path.isAbsolute(input.path) || input.path.includes("\0")) {
+  if (input.path.includes("\0")) {
     return { ok: false, status: "path-rejected", message: `Unsafe artifact path: ${input.path}` };
   }
 
   const projectRoot = path.resolve(input.projectRoot);
-  const absolutePath = path.resolve(projectRoot, input.path);
+  const absolutePath = path.isAbsolute(input.path) ? path.resolve(input.path) : path.resolve(projectRoot, input.path);
   if (!isWithin(projectRoot, absolutePath)) {
     return { ok: false, status: "path-rejected", message: `Artifact path escapes project root: ${input.path}` };
   }
