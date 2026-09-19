@@ -15,7 +15,7 @@ export { ModelSpecReviewer } from "./specification/model-spec-reviewer.ts";
 export { SpecificationWorkflow } from "./specification/specification-workflow.ts";
 
 export type { SpecifierEvent, SpecifierEventName } from "./events.ts";
-export type { NodeArtifactWriterOptions } from "./artifact-writer/node-artifact-writer.ts";
+export type { ArtifactWriterFileSystem, NodeArtifactWriterOptions } from "./artifact-writer/node-artifact-writer.ts";
 export type {
   ArtifactReader,
   ArtifactWriter,

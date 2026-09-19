@@ -41,6 +41,8 @@ If a file already exists, the writer returns a `conflict` result unless `overwri
 - writes UTF-8 text through a temporary file then rename;
 - emits semantic middleware events.
 
+For overwrite, the writer attempts the normal filesystem rename replacement path after the temporary file is fully written. It does not intentionally delete the destination first, so a replacement failure before rename completion preserves the previous artifact and cleans up the temporary file.
+
 `NodeArtifactReader` uses the same project-relative path-safety principle and returns structured `read`, `not-found`, `path-rejected`, or `read-failed` results.
 
 ## Events

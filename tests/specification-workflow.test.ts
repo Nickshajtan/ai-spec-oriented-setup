@@ -259,7 +259,7 @@ test("multiple needs_input findings become deduplicated interview gaps", async (
 
   assert.equal(blocked.status, "needs-input");
   assert.deepEqual(blocked.state.interview.gaps.map((gap) => gap.id), ["review.runtime", "review.scale"]);
-  assert.equal(blocked.state.interview.unresolvedQuestions.length, 2);
+  assert.equal(blocked.state.interview.unresolvedQuestions.length, 1);
 });
 
 test("revising a dependency reconsiders downstream generated artifacts only", async () => {
@@ -444,6 +444,8 @@ class FakeInterviewEngine {
       value: input.answer,
       provenance: { source: "user", recordedAt: "2026-09-18T00:00:00.000Z", detail: "Answer" },
     });
+    const nextQuestion = ensureExternalGapQuestion(session);
+    if (nextQuestion) return { session, question: nextQuestion, ready: false, middleware: [] };
     session.readiness = { ready: true, reason: "External gap resolved.", blockingGaps: [], unresolvedContradictions: [] };
     return { session, ready: true, middleware: [] };
   }
@@ -465,26 +467,34 @@ class FakeInterviewEngine {
         status: "open",
         provenance: { source: gapInput.source, recordedAt: "2026-09-18T00:00:00.000Z", detail: gapInput.issue },
       });
-      if (!session.unresolvedQuestions.some((question) => question.gapId === gapId)) {
-        const question = {
-          id: `question-${gapId}`,
-          text: gapInput.suggestedQuestion ?? gapInput.issue ?? gapInput.reason,
-          why: gapInput.reason,
-          gapId,
-          askedAt: "2026-09-18T00:00:00.000Z",
-        };
-        session.questions.push(question);
-        session.unresolvedQuestions.push(question);
-      }
     }
-    session.readiness = {
-      ready: false,
-      reason: "Externally discovered material gaps must be resolved before proceeding.",
-      blockingGaps: session.gaps.filter((gap) => gap.status === "open").map((gap) => gap.id),
-      unresolvedContradictions: [],
-    };
-    return { session, question: session.unresolvedQuestions.at(-1), ready: false, middleware: [] };
+    const question = ensureExternalGapQuestion(session);
+    return { session, question, ready: false, middleware: [] };
   }
+}
+
+function ensureExternalGapQuestion(session: InterviewSession) {
+  const openGaps = session.gaps.filter((gap) => gap.status === "open");
+  if (openGaps.length === 0) return undefined;
+  session.readiness = {
+    ready: false,
+    reason: "Externally discovered material gaps must be resolved before proceeding.",
+    blockingGaps: openGaps.map((gap) => gap.id),
+    unresolvedContradictions: [],
+  };
+  const existing = session.unresolvedQuestions.find((question) => openGaps.some((gap) => gap.id === question.gapId));
+  if (existing) return existing;
+  const gap = openGaps[0];
+  const question = {
+    id: `question-${gap.id}`,
+    text: gap.suggestedQuestion ?? gap.reason,
+    why: gap.reason,
+    gapId: gap.id,
+    askedAt: "2026-09-18T00:00:00.000Z",
+  };
+  session.questions.push(question);
+  session.unresolvedQuestions.push(question);
+  return question;
 }
 
 class FakeOpenSpecGateway implements OpenSpecGateway {
