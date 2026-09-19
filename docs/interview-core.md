@@ -25,6 +25,8 @@ User-supplied facts are distinct from model-proposed information. The core does 
 
 The planner is AI-assisted, but the engine keeps readiness explicit and blocks readiness when unresolved contradictions remain.
 
+External gaps discovered by review or validation are part of the same `InterviewSession`. The engine stores every open external gap with provenance and asks deterministic external-gap questions one at a time before invoking the normal planner. An open external gap always blocks readiness until its corresponding user answer resolves it.
+
 ## Answer Integration
 
 Answers create explicit user facts. If a new answer conflicts with an existing active fact for the same material gap, the engine records an unresolved contradiction and asks the planner for a resolution question instead of overwriting the earlier fact.

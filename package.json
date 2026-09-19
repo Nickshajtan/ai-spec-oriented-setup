@@ -3,9 +3,24 @@
   "version": "0.1.0",
   "private": true,
   "type": "module",
+  "engines": {
+    "node": ">=22"
+  },
   "scripts": {
+    "format": "npx --yes prettier@3.6.2 . --write",
+    "format:check": "npx --yes prettier@3.6.2 . --check",
+    "lint": "npx --yes eslint@9.36.0 .",
     "typecheck": "node scripts/typecheck.mjs",
     "test": "node --test --experimental-strip-types tests/*.test.ts",
-    "check": "npm run typecheck && npm test"
+    "test:coverage": "node scripts/test-coverage.mjs",
+    "openspec:smoke": "node --experimental-strip-types scripts/openspec-smoke.mjs",
+    "audit:high": "npm audit --audit-level=high",
+    "check": "npm run format:check && npm run lint && npm run typecheck && npm test && npm run test:coverage"
+  },
+  "devDependencies": {
+    "@eslint/js": "9.36.0",
+    "eslint": "9.36.0",
+    "prettier": "3.6.2",
+    "typescript-eslint": "8.44.1"
   }
 }

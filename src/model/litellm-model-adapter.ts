@@ -45,7 +45,9 @@ export class LiteLLMModelAdapter implements ModelPort {
         );
       }
 
-      throw new ModelInvocationError(modelError("LiteLLMUnavailable", "LiteLLM endpoint is unavailable.", request.model, { retryable: true }));
+      throw new ModelInvocationError(
+        modelError("LiteLLMUnavailable", "LiteLLM endpoint is unavailable.", request.model, { retryable: true }),
+      );
     } finally {
       clearTimeout(timeout);
     }
@@ -159,7 +161,8 @@ function normalizeLiteLLMResponse(body: unknown, requestedModel: string, metadat
   }
 
   const first = choices[0];
-  const content = isObject(first) && isObject(first.message) && typeof first.message.content === "string" ? first.message.content : undefined;
+  const content =
+    isObject(first) && isObject(first.message) && typeof first.message.content === "string" ? first.message.content : undefined;
   if (content === undefined) {
     throw new ModelInvocationError(modelError("InvalidResponse", "LiteLLM response choice content is missing.", requestedModel));
   }

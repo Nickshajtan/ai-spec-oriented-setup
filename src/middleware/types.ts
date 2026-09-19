@@ -23,13 +23,8 @@ export type MiddlewareResult =
   | { action: "require-human"; reason: string };
 
 export type ObserverResult = void | { action: "continue" };
-export type PolicyResult =
-  | { action: "continue" }
-  | { action: "deny"; reason: string }
-  | { action: "require-human"; reason: string };
-export type TransformerResult =
-  | { action: "continue" }
-  | { action: "modify"; patch: ContextPatch };
+export type PolicyResult = { action: "continue" } | { action: "deny"; reason: string } | { action: "require-human"; reason: string };
+export type TransformerResult = { action: "continue" } | { action: "modify"; patch: ContextPatch };
 
 export type MiddlewareType = "observer" | "policy" | "transformer";
 export type FailureMode = "fail-open" | "fail-closed";

@@ -1,9 +1,10 @@
 import assert from "node:assert/strict";
-import { mkdtemp, readFile } from "node:fs/promises";
+import { access, mkdir, mkdtemp, readFile, readdir, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import test from "node:test";
 import { MiddlewareBus, NodeArtifactWriter } from "../src/index.ts";
+import type { ArtifactWriterFileSystem } from "../src/index.ts";
 
 async function projectRoot(): Promise<string> {
   return mkdtemp(path.join(tmpdir(), "artifact-writer-"));
@@ -36,6 +37,27 @@ test("does not overwrite by default and overwrites only when explicit", async ()
   assert.equal((await writer.write({ projectRoot: root, path: "artifact.md", content: "two" })).status, "conflict");
   assert.equal((await writer.write({ projectRoot: root, path: "artifact.md", content: "two", overwrite: true })).status, "written");
   assert.equal(await readFile(path.join(root, "artifact.md"), "utf8"), "two");
+});
+
+test("failed overwrite replacement preserves existing artifact and cleans temp file", async () => {
+  const root = await projectRoot();
+  const artifactPath = path.join(root, "artifact.md");
+  await writeFile(artifactPath, "stable", "utf8");
+  const writer = new NodeArtifactWriter({ fileSystem: failingRenameFileSystem() });
+
+  await assert.rejects(
+    writer.write({
+      projectRoot: root,
+      path: "artifact.md",
+      content: "replacement",
+      overwrite: true,
+    }),
+    /rename failed/,
+  );
+
+  assert.equal(await readFile(artifactPath, "utf8"), "stable");
+  const files = await readdir(root);
+  assert.deepEqual(files, ["artifact.md"]);
 });
 
 test("emits before and after middleware events", async () => {
@@ -78,7 +100,10 @@ test("middleware deny and require-human prevent writes", async () => {
     },
   });
 
-  assert.equal((await new NodeArtifactWriter({ bus: denyBus }).write({ projectRoot: denyRoot, path: "artifact.md", content: "text" })).status, "middleware-denied");
+  assert.equal(
+    (await new NodeArtifactWriter({ bus: denyBus }).write({ projectRoot: denyRoot, path: "artifact.md", content: "text" })).status,
+    "middleware-denied",
+  );
 
   const humanRoot = await projectRoot();
   const humanBus = new MiddlewareBus();
@@ -91,5 +116,20 @@ test("middleware deny and require-human prevent writes", async () => {
     },
   });
 
-  assert.equal((await new NodeArtifactWriter({ bus: humanBus }).write({ projectRoot: humanRoot, path: "artifact.md", content: "text" })).status, "requires-human");
+  assert.equal(
+    (await new NodeArtifactWriter({ bus: humanBus }).write({ projectRoot: humanRoot, path: "artifact.md", content: "text" })).status,
+    "requires-human",
+  );
 });
+
+function failingRenameFileSystem(): ArtifactWriterFileSystem {
+  return {
+    access,
+    mkdir,
+    async rename() {
+      throw new Error("rename failed");
+    },
+    rm,
+    writeFile,
+  };
+}

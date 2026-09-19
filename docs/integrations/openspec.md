@@ -14,8 +14,11 @@ Verified with OpenSpec CLI `1.12.0`, the gateway uses:
 openspec new change <change-name> --json
 openspec status --change <change-name> --json
 openspec instructions --change <change-name> --json
+openspec instructions <artifact-id> --change <change-name> --json
 openspec validate <change-name> --json --no-interactive
 ```
+
+CI installs `@fission-ai/openspec@1.12.0` for the real smoke test and fails if that CLI is unavailable or if the machine-readable contract changes.
 
 ## API Example
 
@@ -60,9 +63,16 @@ Current gateway methods:
 - `createChange`
 - `getStatus`
 - `getInstructions`
+- `getArtifactInstructions`
 - `validate`
 
 These methods are intentionally thin. If the OpenSpec CLI provides machine-readable output, preserve that output instead of inventing local dependency rules.
+
+## Generation Authority
+
+The gateway preserves both normalized data and raw CLI JSON. Compatibility normalization may still discover artifact-like data in older or unusual responses, but Core generation decisions use only documented artifact fields normalized from top-level OpenSpec artifact payloads. Compatibility discoveries are context, not authority for what to generate or where to write.
+
+`SpecificationWorkflow` asks OpenSpec for artifact-specific instructions before generation. The resolved artifact path from OpenSpec is passed directly to `ArtifactWriter`; generation code must not construct standard paths such as `proposal.md`, `design.md`, `tasks.md`, or `specs/...`.
 
 ## Compatibility Fallback
 

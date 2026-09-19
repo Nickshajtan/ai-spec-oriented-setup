@@ -273,6 +273,113 @@ test("model question planner sends structured session and parses structured outp
   assert.match(model.requests[0]?.messages[1]?.content ?? "", /capability-proposal/);
 });
 
+test("external review gaps are asked one at a time before normal readiness resumes", async () => {
+  const planner = new QueuePlanner([
+    readyPlan("Initial interview is ready."),
+    readyPlan("Normal planning can resume after external gaps."),
+  ]);
+  const interview = engine(new FakeGateway(), planner);
+  const started = await interview.start({
+    projectRoot: "/project",
+    changeName: "add-redis-cache",
+    roughIdea: "Add Redis caching to WordPress REST responses.",
+  });
+  const reopened = await interview.addExternalGaps({
+    session: started.session,
+    gaps: [
+      {
+        id: "runtime",
+        source: "review",
+        reason: "Runtime target affects implementation.",
+        artifactId: "intent",
+        suggestedQuestion: "Where will this run?",
+        issue: "Runtime missing.",
+      },
+      {
+        id: "scale",
+        source: "review",
+        reason: "Scale affects capacity planning.",
+        artifactId: "intent",
+        suggestedQuestion: "What scale is required?",
+        issue: "Scale missing.",
+      },
+      {
+        id: "runtime",
+        source: "review",
+        reason: "Runtime target affects implementation.",
+        artifactId: "intent",
+        suggestedQuestion: "Where will this run?",
+        issue: "Runtime duplicate.",
+      },
+    ],
+  });
+
+  assert.equal(reopened.question?.text, "Where will this run?");
+  assert.equal(reopened.ready, false);
+  assert.deepEqual(
+    reopened.session.gaps.map((gap) => gap.id),
+    ["review.runtime", "review.scale"],
+  );
+  assert.equal(reopened.session.unresolvedQuestions.length, 1);
+  assert.equal(planner.sessions.length, 1);
+
+  const answeredRuntime = await interview.answer({ session: reopened.session, answer: "Node 22 on Linux." });
+
+  assert.equal(answeredRuntime.ready, false);
+  assert.equal(answeredRuntime.question?.text, "What scale is required?");
+  assert.equal(answeredRuntime.session.gaps.find((gap) => gap.id === "review.runtime")?.status, "resolved");
+  assert.equal(answeredRuntime.session.gaps.find((gap) => gap.id === "review.scale")?.status, "open");
+  assert.deepEqual(answeredRuntime.session.readiness.blockingGaps, ["review.scale"]);
+
+  const answeredScale = await interview.answer({ session: answeredRuntime.session, answer: "About 3000 sites." });
+
+  assert.equal(answeredScale.ready, true);
+  assert.equal(answeredScale.question, undefined);
+  assert.equal(
+    answeredScale.session.gaps.every((gap) => gap.status === "resolved"),
+    true,
+  );
+  assert.equal(answeredScale.session.facts.at(-1)?.provenance.source, "user");
+  assert.equal(planner.sessions.length, 2);
+});
+
+test("external validation gaps follow the same queue invariant", async () => {
+  const planner = new QueuePlanner([readyPlan("Initial interview is ready."), readyPlan("Validation gaps resolved.")]);
+  const interview = engine(new FakeGateway(), planner);
+  const started = await interview.start({
+    projectRoot: "/project",
+    changeName: "add-redis-cache",
+    roughIdea: "Add Redis caching to WordPress REST responses.",
+  });
+  const reopened = await interview.addExternalGaps({
+    session: started.session,
+    gaps: [
+      {
+        id: "retention",
+        source: "validation",
+        reason: "Retention policy is required by validation.",
+        suggestedQuestion: "How long should cache entries be retained?",
+      },
+      {
+        id: "eviction",
+        source: "validation",
+        reason: "Eviction behavior is required by validation.",
+        suggestedQuestion: "What should happen when Redis evicts an entry?",
+      },
+    ],
+  });
+
+  assert.equal(reopened.question?.gapId, "validation.retention");
+  assert.equal(reopened.session.gaps[0]?.provenance.source, "validation");
+
+  const first = await interview.answer({ session: reopened.session, answer: "Retain entries for five minutes." });
+  assert.equal(first.question?.gapId, "validation.eviction");
+  assert.equal(first.ready, false);
+
+  const second = await interview.answer({ session: first.session, answer: "Recompute on the next request." });
+  assert.equal(second.ready, true);
+});
+
 class FakeModel implements ModelPort {
   requests: ModelRequest[] = [];
   private readonly content: string;

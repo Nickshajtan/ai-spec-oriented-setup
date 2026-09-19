@@ -2,7 +2,9 @@ import { MiddlewareBus } from "../bus.ts";
 import type { MiddlewareExecution } from "../middleware/types.ts";
 import type { OpenSpecGateway } from "../openspec/types.ts";
 import type {
+  AddExternalGapsInput,
   AnswerInterviewInput,
+  ExternalInterviewGapInput,
   InterviewContradiction,
   InterviewFact,
   InterviewQuestion,
@@ -71,6 +73,7 @@ export class InterviewEngine {
       choices: [],
       questions: [],
       unresolvedQuestions: [],
+      gaps: [],
       contradictions: [],
       readiness: notReady("Interview has not evaluated material OpenSpec requirements yet.", ["interview.initial"]),
     };
@@ -87,6 +90,7 @@ export class InterviewEngine {
     if (activeQuestion) {
       activeQuestion.answeredAt = now;
       session.unresolvedQuestions = session.unresolvedQuestions.filter((question) => question.id !== activeQuestion.id);
+      session.gaps = session.gaps.map((gap) => (gap.id === activeQuestion.gapId ? { ...gap, status: "resolved" } : gap));
     }
 
     const accepted = new Set(input.acceptedAssumptionIds ?? []);
@@ -119,9 +123,11 @@ export class InterviewEngine {
 
     if (contradiction) {
       session.contradictions.push(contradiction);
-      session.readiness = notReady("A material contradiction must be resolved before proceeding.", [activeQuestion?.gapId ?? "interview.contradiction"], [
-        contradiction.id,
-      ]);
+      session.readiness = notReady(
+        "A material contradiction must be resolved before proceeding.",
+        [activeQuestion?.gapId ?? "interview.contradiction"],
+        [contradiction.id],
+      );
       const acceptedEvent = await this.emit("interview.answer.accepted", session, { answer: input.answer, question: activeQuestion });
       const gapEvent = await this.emit("interview.gap.detected", session, { contradiction });
       return this.planNext(session, [acceptedEvent, gapEvent]);
@@ -129,6 +135,34 @@ export class InterviewEngine {
 
     const acceptedEvent = await this.emit("interview.answer.accepted", session, { answer: input.answer, question: activeQuestion });
     return this.planNext(session, [acceptedEvent]);
+  }
+
+  async addExternalGaps(input: AddExternalGapsInput): Promise<InterviewStepResult> {
+    const session = cloneSession(input.session);
+    const now = this.now();
+
+    for (const gapInput of input.gaps) {
+      const gapId = externalGapId(gapInput);
+      const existing = session.gaps.find((gap) => gap.id === gapId && gap.status === "open");
+      if (existing) continue;
+
+      session.gaps.push({
+        id: gapId,
+        source: gapInput.source,
+        reason: gapInput.reason,
+        artifactId: gapInput.artifactId,
+        suggestedQuestion: gapInput.suggestedQuestion,
+        status: "open",
+        provenance: {
+          source: gapInput.source,
+          recordedAt: now,
+          detail: gapInput.issue,
+        },
+      });
+    }
+
+    const gapEvent = await this.emit("interview.gap.detected", session, { gaps: input.gaps });
+    return this.planNext(session, [gapEvent]);
   }
 
   private async planNext(session: InterviewSession, priorMiddleware: MiddlewareExecution[]): Promise<InterviewStepResult> {
@@ -139,6 +173,14 @@ export class InterviewEngine {
 
     if (before.result.action === "deny" || before.result.action === "require-human") {
       return { session, ready: false, middleware };
+    }
+
+    const externalGapQuestion = this.ensureExternalGapQuestion(session);
+    if (externalGapQuestion) {
+      const planned = await this.emit("interview.question.planned", session, { question: externalGapQuestion });
+      const gap = await this.emit("interview.gap.detected", session, { gapId: externalGapQuestion.gapId, question: externalGapQuestion });
+      const after = await this.emit("interview.turn.after", session);
+      return { session, question: externalGapQuestion, ready: false, middleware: [...middleware, planned, gap, after] };
     }
 
     const plan = await this.planner.plan(session);
@@ -166,6 +208,34 @@ export class InterviewEngine {
     const after = await this.emit("interview.turn.after", session);
 
     return { session, question, ready: false, middleware: [...middleware, planned, gap, after] };
+  }
+
+  private ensureExternalGapQuestion(session: InterviewSession): InterviewQuestion | undefined {
+    const openGapIds = session.gaps.filter((gap) => gap.status === "open").map((gap) => gap.id);
+    if (openGapIds.length === 0) return undefined;
+
+    session.readiness = notReady("Externally discovered material gaps must be resolved before proceeding.", openGapIds);
+
+    const existingQuestion = session.unresolvedQuestions.find((question) => openGapIds.includes(question.gapId));
+    if (existingQuestion) return existingQuestion;
+
+    const askedGapIds = new Set(
+      session.questions.filter((question) => question.answeredAt === undefined).map((question) => question.gapId),
+    );
+    const nextGap = session.gaps.find((gap) => gap.status === "open" && !askedGapIds.has(gap.id));
+    if (!nextGap) return undefined;
+
+    const question: InterviewQuestion = {
+      id: this.id("question"),
+      text: nextGap.suggestedQuestion ?? nextGap.reason,
+      why: nextGap.reason,
+      gapId: nextGap.id,
+      askedAt: this.now(),
+    };
+    session.turnCount += 1;
+    session.questions.push(question);
+    session.unresolvedQuestions.push(question);
+    return question;
   }
 
   private questionFromPlan(plan: QuestionPlan): InterviewQuestion {
@@ -304,6 +374,10 @@ function notReady(reason: string, blockingGaps: string[], unresolvedContradictio
 
 function cloneSession(session: InterviewSession): InterviewSession {
   return structuredClone(session);
+}
+
+function externalGapId(input: ExternalInterviewGapInput): string {
+  return `${input.source}.${input.id}`;
 }
 
 function randomId(): string {

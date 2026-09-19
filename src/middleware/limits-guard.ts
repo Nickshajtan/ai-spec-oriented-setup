@@ -52,11 +52,7 @@ export function createLimitWarnings(config: LimitsGuardConfig = {}): Transformer
       }
 
       const artifactBytes = numericMetadata(context.metadata.artifactSizeBytes);
-      if (
-        config.artifactSizeWarningBytes !== undefined &&
-        artifactBytes !== undefined &&
-        artifactBytes > config.artifactSizeWarningBytes
-      ) {
+      if (config.artifactSizeWarningBytes !== undefined && artifactBytes !== undefined && artifactBytes > config.artifactSizeWarningBytes) {
         warnings.push(`Artifact size is ${artifactBytes} bytes; warning threshold is ${config.artifactSizeWarningBytes} bytes.`);
       }
 

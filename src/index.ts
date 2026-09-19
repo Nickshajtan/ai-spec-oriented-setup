@@ -1,5 +1,6 @@
 export { MiddlewareBus } from "./bus.ts";
 export { SPECIFIER_EVENT_NAMES, specifierEvent } from "./events.ts";
+export { NodeArtifactReader } from "./artifact-writer/node-artifact-reader.ts";
 export { NodeArtifactWriter } from "./artifact-writer/node-artifact-writer.ts";
 export { InterviewEngine } from "./interview/interview-engine.ts";
 export { ModelQuestionPlanner } from "./interview/model-question-planner.ts";
@@ -9,19 +10,34 @@ export { ModelInvocationError, modelError } from "./model/errors.ts";
 export { LiteLLMModelAdapter } from "./model/litellm-model-adapter.ts";
 export { CliOpenSpecGateway } from "./openspec/openspec-gateway.ts";
 export { NodeProcessRunner } from "./process-runner.ts";
+export { ModelArtifactGenerator } from "./specification/model-artifact-generator.ts";
+export { ModelSpecReviewer } from "./specification/model-spec-reviewer.ts";
+export { SpecificationWorkflow } from "./specification/specification-workflow.ts";
 
 export type { SpecifierEvent, SpecifierEventName } from "./events.ts";
-export type { NodeArtifactWriterOptions } from "./artifact-writer/node-artifact-writer.ts";
-export type { ArtifactWriter, WriteArtifactInput, WriteArtifactResult, WriteArtifactStatus } from "./artifact-writer/types.ts";
+export type { ArtifactWriterFileSystem, NodeArtifactWriterOptions } from "./artifact-writer/node-artifact-writer.ts";
+export type {
+  ArtifactReader,
+  ArtifactWriter,
+  ReadArtifactInput,
+  ReadArtifactResult,
+  ReadArtifactStatus,
+  WriteArtifactInput,
+  WriteArtifactResult,
+  WriteArtifactStatus,
+} from "./artifact-writer/types.ts";
 export type { InterviewEngineOptions } from "./interview/interview-engine.ts";
 export type { ModelQuestionPlannerConfig } from "./interview/model-question-planner.ts";
 export type {
   AnswerInterviewInput,
+  AddExternalGapsInput,
   CandidateQuestion,
+  ExternalInterviewGapInput,
   InterviewAssumption,
   InterviewChoice,
   InterviewContradiction,
   InterviewFact,
+  InterviewGap,
   InterviewOpenSpecContext,
   InterviewQuestion,
   InterviewReadiness,
@@ -64,6 +80,9 @@ export type {
 } from "./model/types.ts";
 export type {
   OpenSpecArtifact,
+  OpenSpecArtifactAuthority,
+  OpenSpecArtifactInput,
+  OpenSpecArtifactState,
   OpenSpecChangeInput,
   OpenSpecCommandResult,
   OpenSpecCreateChangeInput,
@@ -74,7 +93,36 @@ export type {
   OpenSpecInstructions,
   OpenSpecStatus,
   OpenSpecValidation,
+  OpenSpecValidationFinding,
   SpecContext,
 } from "./openspec/types.ts";
 export type { CliOpenSpecGatewayOptions } from "./openspec/openspec-gateway.ts";
 export type { ProcessResult, ProcessRunner, ProcessRunOptions } from "./process-runner.ts";
+export type {
+  ActiveInterviewFact,
+  AnswerSpecificationWorkflowInput,
+  ArtifactGenerator,
+  ExternalGapInput,
+  GenerateArtifactInput,
+  GeneratedArtifact,
+  GeneratedArtifactContext,
+  GenerationMode,
+  GenerationState,
+  InterviewGapRegistrar,
+  ModelArtifactGeneratorConfig,
+  ModelSpecReviewerConfig,
+  ReviewFinding,
+  ReviewGapSource,
+  ReviewState,
+  ReviewVerdict,
+  SpecReview,
+  SpecReviewInput,
+  SpecReviewer,
+  SpecificationWorkflowDependencies,
+  SpecificationWorkflowOptions,
+  SpecificationWorkflowResult,
+  SpecificationWorkflowState,
+  SpecificationWorkflowStatus,
+  StartSpecificationWorkflowInput,
+  ValidationState,
+} from "./specification/types.ts";

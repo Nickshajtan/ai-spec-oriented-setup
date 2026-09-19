@@ -28,3 +28,26 @@ export interface WriteArtifactResult {
 export interface ArtifactWriter {
   write(input: WriteArtifactInput): Promise<WriteArtifactResult>;
 }
+
+export interface ReadArtifactInput {
+  projectRoot: string;
+  path: string;
+}
+
+export type ReadArtifactStatus = "read" | "not-found" | "path-rejected" | "read-failed";
+
+export interface ReadArtifactResult {
+  ok: boolean;
+  status: ReadArtifactStatus;
+  path?: string;
+  absolutePath?: string;
+  content?: string;
+  error?: {
+    code: ReadArtifactStatus;
+    message: string;
+  };
+}
+
+export interface ArtifactReader {
+  read(input: ReadArtifactInput): Promise<ReadArtifactResult>;
+}
