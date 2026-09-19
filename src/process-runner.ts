@@ -5,6 +5,7 @@ import path from "node:path";
 export interface ProcessRunOptions {
   cwd: string;
   timeoutMs?: number;
+  stdio?: "pipe" | "inherit";
 }
 
 export interface ProcessResult {
@@ -27,6 +28,7 @@ export class NodeProcessRunner implements ProcessRunner {
         cwd: options.cwd,
         shell: false,
         windowsHide: true,
+        stdio: options.stdio ?? "pipe",
       });
 
       let stdout = "";

@@ -10,6 +10,7 @@ export { ModelInvocationError, modelError } from "./model/errors.ts";
 export { LiteLLMModelAdapter } from "./model/litellm-model-adapter.ts";
 export { CliOpenSpecGateway } from "./openspec/openspec-gateway.ts";
 export { NodeProcessRunner } from "./process-runner.ts";
+export { DefaultAgentLauncher } from "./launcher/default-agent-launcher.ts";
 export { ModelArtifactGenerator } from "./specification/model-artifact-generator.ts";
 export { ModelSpecReviewer } from "./specification/model-spec-reviewer.ts";
 export { SpecificationWorkflow } from "./specification/specification-workflow.ts";
@@ -98,6 +99,7 @@ export type {
 } from "./openspec/types.ts";
 export type { CliOpenSpecGatewayOptions } from "./openspec/openspec-gateway.ts";
 export type { ProcessResult, ProcessRunner, ProcessRunOptions } from "./process-runner.ts";
+export type { AgentAvailability, AgentLauncher, LaunchAgentInput, LaunchAgentResult, SupportedAgent } from "./launcher/types.ts";
 export type {
   ActiveInterviewFact,
   AnswerSpecificationWorkflowInput,
