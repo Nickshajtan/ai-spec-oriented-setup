@@ -3,6 +3,9 @@
   "version": "0.1.0",
   "private": true,
   "type": "module",
+  "bin": {
+    "ai-spec": "./bin/ai-spec.js"
+  },
   "engines": {
     "node": ">=22"
   },
@@ -14,8 +17,10 @@
     "test": "node --test --experimental-strip-types tests/*.test.ts",
     "test:coverage": "node scripts/test-coverage.mjs",
     "openspec:smoke": "node --experimental-strip-types scripts/openspec-smoke.mjs",
+    "skills:sync": "node scripts/sync-agent-skills.mjs --write",
+    "skills:check": "node scripts/sync-agent-skills.mjs --check",
     "audit:high": "npm audit --audit-level=high",
-    "check": "npm run format:check && npm run lint && npm run typecheck && npm test && npm run test:coverage"
+    "check": "npm run format:check && npm run lint && npm run typecheck && npm run skills:check && npm test && npm run test:coverage"
   },
   "devDependencies": {
     "@eslint/js": "9.36.0",

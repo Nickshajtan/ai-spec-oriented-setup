@@ -17,8 +17,10 @@ This is an engineering foundation, not a complete assistant yet. The repository 
 - a thin LiteLLM adapter for model completion;
 - a first vertical slice of the OpenSpec-aware interview core;
 - a Core `SpecificationWorkflow` that coordinates interview readiness, artifact generation, persistence, OpenSpec validation, independent review, revision, and reopen-for-input behavior.
+- a repository-local `specifier` agent skill for Codex and Claude Code;
+- an `ai-spec` launcher that selects a supported installed host agent and explicitly invokes that skill.
 
-It does not yet implement a polished CLI, Codex skill, web UI, queues, database persistence, or automatic feature implementation.
+It does not implement a web UI, queues, database persistence, model/provider routing, or automatic feature implementation.
 
 ## Architecture Boundary
 
@@ -44,6 +46,32 @@ Artifact persistence is deliberately generic. OpenSpec/Core decide what artifact
 - `src/bus.ts` runs domain middleware deterministically.
 - `src/middleware/` contains the small bundled middleware set.
 - `src/process-runner.ts` keeps process execution shell-free and reusable.
+- `src/launcher/` detects and launches supported host agents without containing specification logic.
+- `src/cli/` parses the small `ai-spec` surface and validates the selected project root.
+- `skills/specifier/SKILL.md` is the canonical thin skill source.
+
+## Agent Skill And CLI
+
+Requirements:
+
+- Node.js 22 or newer;
+- OpenSpec CLI compatible with the Core integration (CI pins `1.12.0`);
+- at least one authenticated host agent: Codex CLI or Claude Code CLI.
+
+The repository checks in generated project-local skill representations at `.agents/skills/specifier/SKILL.md` for Codex and `.claude/skills/specifier/SKILL.md` for Claude Code. Invoke it directly as `$specifier` in Codex or `/specifier` in Claude Code.
+
+The package exposes the `ai-spec` bin:
+
+```text
+ai-spec "Add Redis caching to REST responses"
+ai-spec --agent codex "Add Redis caching to REST responses"
+ai-spec --agent claude --change redis-cache "Add Redis caching to REST responses"
+ai-spec --project /path/to/project
+```
+
+Without `--agent`, the launcher detects installed CLIs. It chooses the only available agent, prefers Codex deterministically when both are available, and fails with setup guidance when neither is available. Explicit selection never falls back.
+
+The CLI does not implement specification logic. The skill does not implement specification logic. `SpecificationWorkflow` remains the single Core authority. See [Agent Skill & CLI Launcher](docs/agent-skill-cli.md).
 
 ## Development Commands
 
@@ -55,6 +83,7 @@ npm run typecheck
 npm test
 npm run test:coverage
 npm run openspec:smoke
+npm run skills:check
 npm run check
 ```
 

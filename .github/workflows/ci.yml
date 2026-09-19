@@ -25,6 +25,9 @@ jobs:
       - run: npm ci
       - name: Format check
         run: npm run format:check
+      - name: Skill consistency
+        if: always()
+        run: npm run skills:check
       - name: Lint
         if: always()
         run: npm run lint
