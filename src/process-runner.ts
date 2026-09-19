@@ -10,6 +10,7 @@ export interface ProcessRunOptions {
 
 export interface ProcessResult {
   exitCode: number;
+  signal?: NodeJS.Signals;
   stdout: string;
   stderr: string;
   error?: NodeJS.ErrnoException;
@@ -60,11 +61,11 @@ export class NodeProcessRunner implements ProcessRunner {
         resolve({ exitCode: -1, stdout, stderr, error, timedOut });
       });
 
-      child.on("close", (code) => {
+      child.on("close", (code, signal) => {
         if (settled) return;
         settled = true;
         if (timeout) clearTimeout(timeout);
-        resolve({ exitCode: code ?? -1, stdout, stderr, timedOut });
+        resolve({ exitCode: code ?? -1, signal: signal ?? undefined, stdout, stderr, timedOut });
       });
     });
   }

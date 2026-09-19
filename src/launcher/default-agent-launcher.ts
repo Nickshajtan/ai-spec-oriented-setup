@@ -4,6 +4,7 @@ import { ClaudeAgentAdapter, CodexAgentAdapter, type AgentAdapter } from "./agen
 import type { AgentAvailability, AgentLauncher, LaunchAgentInput, LaunchAgentResult, SupportedAgent } from "./types.ts";
 
 const SIGNAL_EXIT_CODES = new Set([130, 143]);
+const INTERRUPTION_SIGNALS = new Set<NodeJS.Signals>(["SIGINT", "SIGTERM"]);
 
 export class DefaultAgentLauncher implements AgentLauncher {
   private readonly adapters: ReadonlyMap<SupportedAgent, AgentAdapter>;
@@ -22,7 +23,7 @@ export class DefaultAgentLauncher implements AgentLauncher {
   }
 
   async launch(input: LaunchAgentInput): Promise<LaunchAgentResult> {
-    const availability = await this.detect();
+    const availability = input.agent ? await this.detectRequested(input.agent) : await this.detect();
     const selected = selectAgent(input.agent, availability);
     if (!selected.ok) return selected.result;
 
@@ -36,7 +37,7 @@ export class DefaultAgentLauncher implements AgentLauncher {
       stdio: "inherit",
     });
     if (result.exitCode === 0) return { ok: true, agent: selected.agent, exitCode: 0 };
-    if (SIGNAL_EXIT_CODES.has(result.exitCode)) {
+    if (!result.timedOut && ((result.signal && INTERRUPTION_SIGNALS.has(result.signal)) || SIGNAL_EXIT_CODES.has(result.exitCode))) {
       return {
         ok: false,
         status: "interrupted",
@@ -53,6 +54,11 @@ export class DefaultAgentLauncher implements AgentLauncher {
       message: `${displayName(selected.agent)} exited unexpectedly with code ${result.exitCode}.`,
       diagnostic: result.error?.message || result.stderr || undefined,
     };
+  }
+
+  private async detectRequested(agent: SupportedAgent): Promise<AgentAvailability[]> {
+    const adapter = this.adapters.get(agent);
+    return adapter ? [await adapter.detect(this.processRunner, process.cwd())] : [];
   }
 }
 

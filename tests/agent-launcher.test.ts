@@ -27,6 +27,10 @@ test("explicit Codex selection launches Codex", async () => {
   const result = await new DefaultAgentLauncher(runner).launch({ projectRoot: "/project", agent: "codex", idea: "cache" });
   assert.equal(result.ok, true);
   assert.equal(runner.calls.at(-1)?.command, "codex");
+  assert.deepEqual(
+    runner.calls.map((call) => call.command),
+    ["codex", "codex"],
+  );
 });
 
 test("explicit Claude selection launches Claude", async () => {
@@ -34,6 +38,10 @@ test("explicit Claude selection launches Claude", async () => {
   const result = await new DefaultAgentLauncher(runner).launch({ projectRoot: "/project", agent: "claude", idea: "cache" });
   assert.equal(result.ok, true);
   assert.equal(runner.calls.at(-1)?.command, "claude");
+  assert.deepEqual(
+    runner.calls.map((call) => call.command),
+    ["claude", "claude"],
+  );
 });
 
 test("explicit unavailable agent fails without substitution", async () => {
@@ -74,7 +82,7 @@ test("uses Claude's explicit slash skill invocation", async () => {
   assert.match(runner.calls.at(-1)!.args[0]!, /\/specifier/);
 });
 
-test("surfaces non-zero exits and interruption exit codes", async () => {
+test("surfaces non-zero exits and detects explicit signals before compatibility exit codes", async () => {
   const failedRunner = new FakeRunner({ codex: [success("codex 1"), failure(7, "boom")] });
   const failed = await new DefaultAgentLauncher(failedRunner).launch({ projectRoot: "/project", agent: "codex" });
   assert.equal(failed.ok, false);
@@ -84,6 +92,18 @@ test("surfaces non-zero exits and interruption exit codes", async () => {
   const interrupted = await new DefaultAgentLauncher(interruptedRunner).launch({ projectRoot: "/project", agent: "codex" });
   assert.equal(interrupted.ok, false);
   if (!interrupted.ok) assert.equal(interrupted.status, "interrupted");
+
+  const signaledRunner = new FakeRunner({ codex: [success("codex 1"), failure(-1, "", { signal: "SIGINT" })] });
+  const signaled = await new DefaultAgentLauncher(signaledRunner).launch({ projectRoot: "/project", agent: "codex" });
+  assert.equal(signaled.ok, false);
+  if (!signaled.ok) assert.equal(signaled.status, "interrupted");
+
+  const timedOutRunner = new FakeRunner({
+    codex: [success("codex 1"), failure(-1, "", { signal: "SIGTERM", timedOut: true })],
+  });
+  const timedOut = await new DefaultAgentLauncher(timedOutRunner).launch({ projectRoot: "/project", agent: "codex" });
+  assert.equal(timedOut.ok, false);
+  if (!timedOut.ok) assert.equal(timedOut.status, "agent-failed");
 });
 
 class FakeRunner implements ProcessRunner {
@@ -106,6 +126,6 @@ function success(stdout = ""): ProcessResult {
   return { exitCode: 0, stdout, stderr: "" };
 }
 
-function failure(exitCode: number, stderr = ""): ProcessResult {
-  return { exitCode, stdout: "", stderr };
+function failure(exitCode: number, stderr = "", extra: Partial<ProcessResult> = {}): ProcessResult {
+  return { exitCode, stdout: "", stderr, ...extra };
 }
