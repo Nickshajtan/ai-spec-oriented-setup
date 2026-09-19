@@ -274,7 +274,10 @@ test("model question planner sends structured session and parses structured outp
 });
 
 test("external review gaps are asked one at a time before normal readiness resumes", async () => {
-  const planner = new QueuePlanner([readyPlan("Initial interview is ready."), readyPlan("Normal planning can resume after external gaps.")]);
+  const planner = new QueuePlanner([
+    readyPlan("Initial interview is ready."),
+    readyPlan("Normal planning can resume after external gaps."),
+  ]);
   const interview = engine(new FakeGateway(), planner);
   const started = await interview.start({
     projectRoot: "/project",

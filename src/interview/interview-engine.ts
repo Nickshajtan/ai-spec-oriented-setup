@@ -123,9 +123,11 @@ export class InterviewEngine {
 
     if (contradiction) {
       session.contradictions.push(contradiction);
-      session.readiness = notReady("A material contradiction must be resolved before proceeding.", [activeQuestion?.gapId ?? "interview.contradiction"], [
-        contradiction.id,
-      ]);
+      session.readiness = notReady(
+        "A material contradiction must be resolved before proceeding.",
+        [activeQuestion?.gapId ?? "interview.contradiction"],
+        [contradiction.id],
+      );
       const acceptedEvent = await this.emit("interview.answer.accepted", session, { answer: input.answer, question: activeQuestion });
       const gapEvent = await this.emit("interview.gap.detected", session, { contradiction });
       return this.planNext(session, [acceptedEvent, gapEvent]);
@@ -217,7 +219,9 @@ export class InterviewEngine {
     const existingQuestion = session.unresolvedQuestions.find((question) => openGapIds.includes(question.gapId));
     if (existingQuestion) return existingQuestion;
 
-    const askedGapIds = new Set(session.questions.filter((question) => question.answeredAt === undefined).map((question) => question.gapId));
+    const askedGapIds = new Set(
+      session.questions.filter((question) => question.answeredAt === undefined).map((question) => question.gapId),
+    );
     const nextGap = session.gaps.find((gap) => gap.status === "open" && !askedGapIds.has(gap.id));
     if (!nextGap) return undefined;
 

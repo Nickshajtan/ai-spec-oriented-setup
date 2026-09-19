@@ -18,9 +18,18 @@ import type {
 
 test("generates custom OpenSpec artifacts, validates, reviews, and becomes ready", async () => {
   const gateway = new FakeOpenSpecGateway([
-    [artifact("intent", "openspec/changes/custom/intent.md", "missing"), artifact("architecture-note", "openspec/changes/custom/architecture.md", "blocked", ["intent"])],
-    [artifact("intent", "openspec/changes/custom/intent.md", "complete"), artifact("architecture-note", "openspec/changes/custom/architecture.md", "missing", ["intent"])],
-    [artifact("intent", "openspec/changes/custom/intent.md", "complete"), artifact("architecture-note", "openspec/changes/custom/architecture.md", "complete", ["intent"])],
+    [
+      artifact("intent", "openspec/changes/custom/intent.md", "missing"),
+      artifact("architecture-note", "openspec/changes/custom/architecture.md", "blocked", ["intent"]),
+    ],
+    [
+      artifact("intent", "openspec/changes/custom/intent.md", "complete"),
+      artifact("architecture-note", "openspec/changes/custom/architecture.md", "missing", ["intent"]),
+    ],
+    [
+      artifact("intent", "openspec/changes/custom/intent.md", "complete"),
+      artifact("architecture-note", "openspec/changes/custom/architecture.md", "complete", ["intent"]),
+    ],
   ]);
   const store = new MemoryArtifacts();
   const generator = new QueueGenerator(["intent content", "architecture content"]);
@@ -40,17 +49,37 @@ test("generates custom OpenSpec artifacts, validates, reviews, and becomes ready
 
 test("review needs_revision revises only affected artifact with explicit overwrite", async () => {
   const gateway = new FakeOpenSpecGateway([
-    [artifact("intent", "openspec/changes/custom/intent.md", "missing"), artifact("implementation-plan", "openspec/changes/custom/plan.md", "missing")],
-    [artifact("intent", "openspec/changes/custom/intent.md", "complete"), artifact("implementation-plan", "openspec/changes/custom/plan.md", "missing")],
-    [artifact("intent", "openspec/changes/custom/intent.md", "complete"), artifact("implementation-plan", "openspec/changes/custom/plan.md", "complete")],
-    [artifact("intent", "openspec/changes/custom/intent.md", "complete"), artifact("implementation-plan", "openspec/changes/custom/plan.md", "complete")],
+    [
+      artifact("intent", "openspec/changes/custom/intent.md", "missing"),
+      artifact("implementation-plan", "openspec/changes/custom/plan.md", "missing"),
+    ],
+    [
+      artifact("intent", "openspec/changes/custom/intent.md", "complete"),
+      artifact("implementation-plan", "openspec/changes/custom/plan.md", "missing"),
+    ],
+    [
+      artifact("intent", "openspec/changes/custom/intent.md", "complete"),
+      artifact("implementation-plan", "openspec/changes/custom/plan.md", "complete"),
+    ],
+    [
+      artifact("intent", "openspec/changes/custom/intent.md", "complete"),
+      artifact("implementation-plan", "openspec/changes/custom/plan.md", "complete"),
+    ],
   ]);
   const store = new MemoryArtifacts();
   const generator = new QueueGenerator(["intent v1", "plan v1", "plan v2"]);
   const reviewer = new QueueReviewer([
     {
       verdict: "needs_revision",
-      findings: [{ id: "plan-missing", severity: "error", artifactId: "implementation-plan", issue: "Plan omitted known fact.", reason: "Known fact was not represented." }],
+      findings: [
+        {
+          id: "plan-missing",
+          severity: "error",
+          artifactId: "implementation-plan",
+          issue: "Plan omitted known fact.",
+          reason: "Known fact was not represented.",
+        },
+      ],
     },
     { verdict: "pass", findings: [] },
   ]);
@@ -135,9 +164,15 @@ test("validation failure is repaired before mandatory independent review", async
 test("guards generation no-progress loops and writer conflicts", async () => {
   const noProgress = new FakeOpenSpecGateway([[artifact("intent", "openspec/changes/custom/intent.md", "missing")]]);
   const store = new MemoryArtifacts();
-  const blocked = await workflow(noProgress, store, new QueueGenerator(["one", "two"]), new QueueReviewer([{ verdict: "pass", findings: [] }]), {
-    maxGenerationIterations: 2,
-  }).start(startInput());
+  const blocked = await workflow(
+    noProgress,
+    store,
+    new QueueGenerator(["one", "two"]),
+    new QueueReviewer([{ verdict: "pass", findings: [] }]),
+    {
+      maxGenerationIterations: 2,
+    },
+  ).start(startInput());
 
   assert.equal(blocked.status, "failed");
   assert.equal(blocked.state.failure?.code, "generation-no-progress");
@@ -157,7 +192,10 @@ test("guards generation no-progress loops and writer conflicts", async () => {
 
 test("guards review iteration limits and malformed review output", async () => {
   const reviewLimited = await workflow(
-    new FakeOpenSpecGateway([[artifact("intent", "openspec/changes/custom/intent.md", "missing")], [artifact("intent", "openspec/changes/custom/intent.md", "complete")]]),
+    new FakeOpenSpecGateway([
+      [artifact("intent", "openspec/changes/custom/intent.md", "missing")],
+      [artifact("intent", "openspec/changes/custom/intent.md", "complete")],
+    ]),
     new MemoryArtifacts(),
     new QueueGenerator(["intent"]),
     new QueueReviewer([
@@ -173,7 +211,10 @@ test("guards review iteration limits and malformed review output", async () => {
   assert.equal(reviewLimited.state.failure?.code, "review-iteration-limit");
 
   const malformed = await workflow(
-    new FakeOpenSpecGateway([[artifact("intent", "openspec/changes/custom/intent.md", "missing")], [artifact("intent", "openspec/changes/custom/intent.md", "complete")]]),
+    new FakeOpenSpecGateway([
+      [artifact("intent", "openspec/changes/custom/intent.md", "missing")],
+      [artifact("intent", "openspec/changes/custom/intent.md", "complete")],
+    ]),
     new MemoryArtifacts(),
     new QueueGenerator(["intent"]),
     {
@@ -190,8 +231,14 @@ test("guards review iteration limits and malformed review output", async () => {
 test("validation repair targets diagnostics and never guesses the first artifact", async () => {
   const gateway = new FakeOpenSpecGateway(
     [
-      [artifact("intent", "openspec/changes/custom/intent.md", "complete"), artifact("implementation-plan", "openspec/changes/custom/plan.md", "complete")],
-      [artifact("intent", "openspec/changes/custom/intent.md", "complete"), artifact("implementation-plan", "openspec/changes/custom/plan.md", "complete")],
+      [
+        artifact("intent", "openspec/changes/custom/intent.md", "complete"),
+        artifact("implementation-plan", "openspec/changes/custom/plan.md", "complete"),
+      ],
+      [
+        artifact("intent", "openspec/changes/custom/intent.md", "complete"),
+        artifact("implementation-plan", "openspec/changes/custom/plan.md", "complete"),
+      ],
     ],
     [false, true],
   );
@@ -248,9 +295,30 @@ test("multiple needs_input findings become deduplicated interview gaps", async (
     {
       verdict: "needs_input",
       findings: [
-        { id: "runtime", severity: "error", artifactId: "intent", issue: "Runtime missing.", reason: "Runtime matters.", suggestedQuestion: "Where will this run?" },
-        { id: "scale", severity: "error", artifactId: "intent", issue: "Scale missing.", reason: "Scale matters.", suggestedQuestion: "What scale is required?" },
-        { id: "runtime", severity: "error", artifactId: "intent", issue: "Runtime missing.", reason: "Runtime matters.", suggestedQuestion: "Where will this run?" },
+        {
+          id: "runtime",
+          severity: "error",
+          artifactId: "intent",
+          issue: "Runtime missing.",
+          reason: "Runtime matters.",
+          suggestedQuestion: "Where will this run?",
+        },
+        {
+          id: "scale",
+          severity: "error",
+          artifactId: "intent",
+          issue: "Scale missing.",
+          reason: "Scale matters.",
+          suggestedQuestion: "What scale is required?",
+        },
+        {
+          id: "runtime",
+          severity: "error",
+          artifactId: "intent",
+          issue: "Runtime missing.",
+          reason: "Runtime matters.",
+          suggestedQuestion: "Where will this run?",
+        },
       ],
     },
   ]);
@@ -295,9 +363,28 @@ test("revising a dependency reconsiders downstream generated artifacts only", as
       artifact("unrelated", "openspec/changes/custom/unrelated.md", "complete"),
     ],
   ]);
-  const generator = new QueueGenerator(["intent", "architecture", "plan", "unrelated", "intent revised", "architecture revised", "plan revised"]);
+  const generator = new QueueGenerator([
+    "intent",
+    "architecture",
+    "plan",
+    "unrelated",
+    "intent revised",
+    "architecture revised",
+    "plan revised",
+  ]);
   const reviewer = new QueueReviewer([
-    { verdict: "needs_revision", findings: [{ id: "intent", severity: "error", artifactId: "intent", issue: "Intent stale.", reason: "Known information was omitted." }] },
+    {
+      verdict: "needs_revision",
+      findings: [
+        {
+          id: "intent",
+          severity: "error",
+          artifactId: "intent",
+          issue: "Intent stale.",
+          reason: "Known information was omitted.",
+        },
+      ],
+    },
     { verdict: "pass", findings: [] },
   ]);
 
@@ -316,19 +403,32 @@ test("revising a dependency reconsiders downstream generated artifacts only", as
 });
 
 test("OpenSpec status or instructions failures before review block reviewer invocation", async () => {
-  const statusGateway = new FakeOpenSpecGateway([[artifact("intent", "openspec/changes/custom/intent.md", "missing")], [artifact("intent", "openspec/changes/custom/intent.md", "complete")]]);
+  const statusGateway = new FakeOpenSpecGateway([
+    [artifact("intent", "openspec/changes/custom/intent.md", "missing")],
+    [artifact("intent", "openspec/changes/custom/intent.md", "complete")],
+  ]);
   statusGateway.failStatusBeforeReview = true;
   const statusReviewer = new QueueReviewer([{ verdict: "pass", findings: [] }]);
-  const statusResult = await workflow(statusGateway, new MemoryArtifacts(), new QueueGenerator(["intent"]), statusReviewer).start(startInput());
+  const statusResult = await workflow(statusGateway, new MemoryArtifacts(), new QueueGenerator(["intent"]), statusReviewer).start(
+    startInput(),
+  );
 
   assert.equal(statusResult.status, "failed");
   assert.equal(statusResult.state.failure?.code, "openspec-status-before-review");
   assert.equal(statusReviewer.calls.length, 0);
 
-  const instructionsGateway = new FakeOpenSpecGateway([[artifact("intent", "openspec/changes/custom/intent.md", "missing")], [artifact("intent", "openspec/changes/custom/intent.md", "complete")]]);
+  const instructionsGateway = new FakeOpenSpecGateway([
+    [artifact("intent", "openspec/changes/custom/intent.md", "missing")],
+    [artifact("intent", "openspec/changes/custom/intent.md", "complete")],
+  ]);
   instructionsGateway.failInstructionsBeforeReview = true;
   const instructionsReviewer = new QueueReviewer([{ verdict: "pass", findings: [] }]);
-  const instructionsResult = await workflow(instructionsGateway, new MemoryArtifacts(), new QueueGenerator(["intent"]), instructionsReviewer).start(startInput());
+  const instructionsResult = await workflow(
+    instructionsGateway,
+    new MemoryArtifacts(),
+    new QueueGenerator(["intent"]),
+    instructionsReviewer,
+  ).start(startInput());
 
   assert.equal(instructionsResult.status, "failed");
   assert.equal(instructionsResult.state.failure?.code, "openspec-instructions-before-review");
@@ -343,8 +443,14 @@ test("dependency path-rejected and read-failed fail safely without cached fallba
     store.readFailureAfterReads.set(dependencyPath, 1);
     const result = await workflow(
       new FakeOpenSpecGateway([
-        [artifact("intent", dependencyPath, "missing"), artifact("architecture-note", "openspec/changes/custom/architecture.md", "missing", ["intent"])],
-        [artifact("intent", dependencyPath, "complete"), artifact("architecture-note", "openspec/changes/custom/architecture.md", "missing", ["intent"])],
+        [
+          artifact("intent", dependencyPath, "missing"),
+          artifact("architecture-note", "openspec/changes/custom/architecture.md", "missing", ["intent"]),
+        ],
+        [
+          artifact("intent", dependencyPath, "complete"),
+          artifact("architecture-note", "openspec/changes/custom/architecture.md", "missing", ["intent"]),
+        ],
       ]),
       store,
       new QueueGenerator(["intent", "architecture"]),
@@ -390,7 +496,11 @@ function workflow(
   store: MemoryArtifacts,
   generator: QueueGenerator,
   reviewer: SpecReviewer,
-  options: { maxGenerationIterations?: number; maxValidationRepairIterations?: number; maxReviewIterations?: number } = {},
+  options: {
+    maxGenerationIterations?: number;
+    maxValidationRepairIterations?: number;
+    maxReviewIterations?: number;
+  } = {},
 ): SpecificationWorkflow {
   return new SpecificationWorkflow(
     {
@@ -452,7 +562,14 @@ class FakeInterviewEngine {
 
   async addExternalGaps(input: {
     session: InterviewSession;
-    gaps: Array<{ id: string; source: "review" | "validation"; reason: string; artifactId?: string; suggestedQuestion?: string; issue?: string }>;
+    gaps: Array<{
+      id: string;
+      source: "review" | "validation";
+      reason: string;
+      artifactId?: string;
+      suggestedQuestion?: string;
+      issue?: string;
+    }>;
   }) {
     const session = structuredClone(input.session);
     for (const gapInput of input.gaps) {
@@ -557,18 +674,29 @@ class MemoryArtifacts implements ArtifactWriter, ArtifactReader {
       return { ok: false, status: "conflict" as const, error: { code: "conflict" as const, message: "exists" }, middleware: {} };
     }
     this.files.set(input.path, input.content);
-    return { ok: true, status: "written" as const, path: input.path, absolutePath: input.path, bytesWritten: input.content.length, middleware: {} };
+    return {
+      ok: true,
+      status: "written" as const,
+      path: input.path,
+      absolutePath: input.path,
+      bytesWritten: input.content.length,
+      middleware: {},
+    };
   }
 
   async read(input: { path: string }) {
     const failureStatus = this.readFailures.get(input.path);
     if (failureStatus) {
       const remainingSuccessfulReads = this.readFailureAfterReads.get(input.path) ?? 0;
-      if (remainingSuccessfulReads <= 0) return { ok: false, status: failureStatus, error: { code: failureStatus, message: failureStatus } };
+      if (remainingSuccessfulReads <= 0) {
+        return { ok: false, status: failureStatus, error: { code: failureStatus, message: failureStatus } };
+      }
       this.readFailureAfterReads.set(input.path, remainingSuccessfulReads - 1);
     }
     const content = this.files.get(input.path);
-    if (content === undefined) return { ok: false, status: "not-found" as const, error: { code: "not-found" as const, message: "missing" } };
+    if (content === undefined) {
+      return { ok: false, status: "not-found" as const, error: { code: "not-found" as const, message: "missing" } };
+    }
     return { ok: true, status: "read" as const, path: input.path, absolutePath: input.path, content };
   }
 }
@@ -643,7 +771,10 @@ function readySession(input = startInput()): InterviewSession {
   };
 }
 
-function ok(artifacts: OpenSpecArtifact[], validation?: NonNullable<OpenSpecGatewayResult["context"]>["openspec"]["validation"]): OpenSpecGatewayResult {
+function ok(
+  artifacts: OpenSpecArtifact[],
+  validation?: NonNullable<OpenSpecGatewayResult["context"]>["openspec"]["validation"],
+): OpenSpecGatewayResult {
   return {
     ok: validation?.valid ?? true,
     status: validation ? (validation.valid ? "valid" : "invalid") : "status-read",

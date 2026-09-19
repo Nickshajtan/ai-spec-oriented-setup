@@ -60,7 +60,9 @@ export function createLimitWarnings(config: LimitsGuardConfig = {}): Transformer
         warnings.push(`Artifact size is ${artifactBytes} bytes; warning threshold is ${config.artifactSizeWarningBytes} bytes.`);
       }
 
-      return warnings.length === (context.warnings ?? []).length ? { action: "continue" } : { action: "modify", patch: { warnings } };
+      return warnings.length === (context.warnings ?? []).length
+        ? { action: "continue" }
+        : { action: "modify", patch: { warnings } };
     },
   };
 }

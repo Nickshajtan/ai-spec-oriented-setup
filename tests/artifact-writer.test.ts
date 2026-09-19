@@ -100,7 +100,10 @@ test("middleware deny and require-human prevent writes", async () => {
     },
   });
 
-  assert.equal((await new NodeArtifactWriter({ bus: denyBus }).write({ projectRoot: denyRoot, path: "artifact.md", content: "text" })).status, "middleware-denied");
+  assert.equal(
+    (await new NodeArtifactWriter({ bus: denyBus }).write({ projectRoot: denyRoot, path: "artifact.md", content: "text" })).status,
+    "middleware-denied",
+  );
 
   const humanRoot = await projectRoot();
   const humanBus = new MiddlewareBus();
@@ -113,7 +116,10 @@ test("middleware deny and require-human prevent writes", async () => {
     },
   });
 
-  assert.equal((await new NodeArtifactWriter({ bus: humanBus }).write({ projectRoot: humanRoot, path: "artifact.md", content: "text" })).status, "requires-human");
+  assert.equal(
+    (await new NodeArtifactWriter({ bus: humanBus }).write({ projectRoot: humanRoot, path: "artifact.md", content: "text" })).status,
+    "requires-human",
+  );
 });
 
 function failingRenameFileSystem(): ArtifactWriterFileSystem {

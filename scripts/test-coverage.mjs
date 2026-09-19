@@ -49,5 +49,7 @@ if (failures.length > 0) {
 }
 
 console.log(
-  `Coverage thresholds passed: lines ${actual.lines.toFixed(2)}%, branches ${actual.branches.toFixed(2)}%, functions ${actual.functions.toFixed(2)}%.`,
+  `Coverage thresholds passed: lines ${actual.lines.toFixed(2)}%, branches ${actual.branches.toFixed(
+    2,
+  )}%, functions ${actual.functions.toFixed(2)}%.`,
 );

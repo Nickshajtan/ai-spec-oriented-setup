@@ -88,7 +88,12 @@ export class CliOpenSpecGateway implements OpenSpecGateway {
     const haltedAfter = haltIfNeeded(after, context, before);
     if (haltedAfter) return haltedAfter;
 
-    return { ok: cli.exitCode === 0, status: cli.exitCode === 0 ? "status-read" : "command-failed", context, middleware: { before, after } };
+    return {
+      ok: cli.exitCode === 0,
+      status: cli.exitCode === 0 ? "status-read" : "command-failed",
+      context,
+      middleware: { before, after },
+    };
   }
 
   async getInstructions(input: OpenSpecChangeInput): Promise<OpenSpecGatewayResult> {
@@ -185,7 +190,9 @@ type ResolvedChange =
   | { ok: false; status: "path-rejected" | "project-not-initialized" | "missing-change"; message: string };
 
 function resolveChange(input: OpenSpecChangeInput, options: { requireExistingChange: boolean }): ResolvedChange {
-  if (!input.projectRoot || !input.changeName) return { ok: false, status: "path-rejected", message: "projectRoot and changeName are required" };
+  if (!input.projectRoot || !input.changeName) {
+    return { ok: false, status: "path-rejected", message: "projectRoot and changeName are required" };
+  }
   if (input.changeName.includes("/") || input.changeName.includes("\\") || input.changeName === "." || input.changeName === "..") {
     return { ok: false, status: "path-rejected", message: `Invalid OpenSpec change name: ${input.changeName}` };
   }
@@ -209,7 +216,11 @@ function resolveChange(input: OpenSpecChangeInput, options: { requireExistingCha
 }
 
 function baseContext(projectRoot: string, changeName: string, openspec: Partial<SpecContext["openspec"]>): SpecContext {
-  const artifacts = mergeArtifacts(openspec.artifacts ?? [], openspec.status?.normalized.artifacts ?? [], openspec.instructions?.normalized.artifacts ?? []);
+  const artifacts = mergeArtifacts(
+    openspec.artifacts ?? [],
+    openspec.status?.normalized.artifacts ?? [],
+    openspec.instructions?.normalized.artifacts ?? [],
+  );
   const metadata = {
     ...(openspec.metadata ?? {}),
     ...(openspec.status?.normalized.metadata ?? {}),
@@ -275,9 +286,18 @@ function collectArtifactsFromValue(value: unknown, artifacts: Map<string, OpenSp
     return;
   }
 
-  const id = stringField(value, "id") ?? stringField(value, "artifactId") ?? stringField(value, "artifact") ?? stringField(value, "name") ?? stringField(value, "key");
+  const id =
+    stringField(value, "id") ??
+    stringField(value, "artifactId") ??
+    stringField(value, "artifact") ??
+    stringField(value, "name") ??
+    stringField(value, "key");
   const pathValue =
-    stringField(value, "resolvedOutputPath") ?? stringField(value, "outputPath") ?? stringField(value, "path") ?? stringField(value, "file") ?? stringField(value, "targetPath");
+    stringField(value, "resolvedOutputPath") ??
+    stringField(value, "outputPath") ??
+    stringField(value, "path") ??
+    stringField(value, "file") ??
+    stringField(value, "targetPath");
   if (id || pathValue) {
     upsertArtifact(artifacts, {
       id: id ?? pathValue ?? "artifact",
@@ -315,9 +335,18 @@ function collectArtifactsFromValue(value: unknown, artifacts: Map<string, OpenSp
 
 function normalizeArtifactObject(value: unknown, normalization: "documented" | "compatibility"): OpenSpecArtifact | undefined {
   if (!isObject(value)) return undefined;
-  const id = stringField(value, "id") ?? stringField(value, "artifactId") ?? stringField(value, "artifact") ?? stringField(value, "name") ?? stringField(value, "key");
+  const id =
+    stringField(value, "id") ??
+    stringField(value, "artifactId") ??
+    stringField(value, "artifact") ??
+    stringField(value, "name") ??
+    stringField(value, "key");
   const pathValue =
-    stringField(value, "resolvedOutputPath") ?? stringField(value, "outputPath") ?? stringField(value, "path") ?? stringField(value, "file") ?? stringField(value, "targetPath");
+    stringField(value, "resolvedOutputPath") ??
+    stringField(value, "outputPath") ??
+    stringField(value, "path") ??
+    stringField(value, "file") ??
+    stringField(value, "targetPath");
   if (!id && !pathValue) return undefined;
   const status = stringField(value, "status") ?? stringField(value, "state");
 
@@ -425,7 +454,11 @@ function afterContext(context: SpecContext): Omit<MiddlewareContext, "event"> {
   return { runId: `openspec:${context.changeName}`, subjectId: context.changeName, metadata: { system: "openspec", specContext: context } };
 }
 
-function haltIfNeeded(beforeOrAfter: MiddlewareExecution, context?: SpecContext, before?: MiddlewareExecution): OpenSpecGatewayResult | undefined {
+function haltIfNeeded(
+  beforeOrAfter: MiddlewareExecution,
+  context?: SpecContext,
+  before?: MiddlewareExecution,
+): OpenSpecGatewayResult | undefined {
   if (beforeOrAfter.result.action !== "deny" && beforeOrAfter.result.action !== "require-human") return undefined;
   const status = beforeOrAfter.result.action === "deny" ? "middleware-denied" : "requires-human";
   return {
@@ -443,7 +476,12 @@ function isCliExecutionFailure(result: ProcessResult): boolean {
 
 function cliFailure(result: ProcessResult, before: MiddlewareExecution): OpenSpecGatewayResult {
   if (result.error?.code === "ENOENT") return failure("cli-unavailable", "OpenSpec CLI is unavailable.", result.error, before);
-  return failure("command-failed", result.timedOut ? "OpenSpec CLI command timed out." : "OpenSpec CLI command failed to execute.", result.error, before);
+  return failure(
+    "command-failed",
+    result.timedOut ? "OpenSpec CLI command timed out." : "OpenSpec CLI command failed to execute.",
+    result.error,
+    before,
+  );
 }
 
 function failure(status: OpenSpecGatewayStatus, message: string, cause?: unknown, before?: MiddlewareExecution): OpenSpecGatewayResult {

@@ -36,7 +36,11 @@ try {
   const metadata = await readFile(metadataPath, "utf8");
   await writeFile(metadataPath, `${metadata.trimEnd()}\nskip_specs: true\n`, "utf8");
 
-  const proposalInstructions = await gateway.getArtifactInstructions({ projectRoot, changeName, artifactId: "proposal" });
+  const proposalInstructions = await gateway.getArtifactInstructions({
+    projectRoot,
+    changeName,
+    artifactId: "proposal",
+  });
   assertOk(proposalInstructions.ok, "proposal instructions failed");
   const proposalArtifact = proposalInstructions.context?.openspec.artifacts.find((artifact) => artifact.id === "proposal");
   assertOk(Boolean(proposalArtifact?.path), "proposal instructions did not expose a resolved path");
@@ -80,7 +84,10 @@ try {
 
   const validation = await gateway.validate({ projectRoot, changeName });
   assertOk(validation.context?.openspec.validation !== undefined, "validate did not return validation context");
-  assertOk(validation.context?.openspec.validation?.valid === true, validation.context?.openspec.validation?.stderr || "OpenSpec validation failed");
+  assertOk(
+    validation.context?.openspec.validation?.valid === true,
+    validation.context?.openspec.validation?.stderr || "OpenSpec validation failed",
+  );
 
   console.log(`OpenSpec ${version} smoke passed.`);
 } finally {

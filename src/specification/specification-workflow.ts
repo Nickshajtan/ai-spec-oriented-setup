@@ -27,7 +27,10 @@ export class SpecificationWorkflow {
   private readonly maxReviewIterations: number;
   private readonly clock: () => Date;
 
-  constructor(dependencies: SpecificationWorkflowDependencies, options: SpecificationWorkflowOptions & { bus?: MiddlewareBus; clock?: () => Date } = {}) {
+  constructor(
+    dependencies: SpecificationWorkflowDependencies,
+    options: SpecificationWorkflowOptions & { bus?: MiddlewareBus; clock?: () => Date } = {},
+  ) {
     this.dependencies = dependencies;
     this.bus = options.bus ?? new MiddlewareBus();
     this.maxGenerationIterations = options.maxGenerationIterations ?? DEFAULT_MAX_GENERATION_ITERATIONS;
@@ -164,7 +167,11 @@ export class SpecificationWorkflow {
       if (!artifactResult.ok) return { ok: false };
       revisionIds.delete(nextArtifact.id);
       if (mode === "revise") {
-        for (const dependentArtifactId of downstreamGeneratedArtifactIds(nextArtifact.id, status.context.openspec.artifacts, state.generation.artifacts)) {
+        for (const dependentArtifactId of downstreamGeneratedArtifactIds(
+          nextArtifact.id,
+          status.context.openspec.artifacts,
+          state.generation.artifacts,
+        )) {
           revisionIds.add(dependentArtifactId);
         }
       }
@@ -186,7 +193,13 @@ export class SpecificationWorkflow {
       artifactId: statusArtifact.id,
     });
     if (!instructionsResult.ok || !instructionsResult.context) {
-      await this.fail(state, middleware, "openspec-instructions", instructionsResult.error?.message ?? "OpenSpec artifact instructions failed.", instructionsResult.error);
+      await this.fail(
+        state,
+        middleware,
+        "openspec-instructions",
+        instructionsResult.error?.message ?? "OpenSpec artifact instructions failed.",
+        instructionsResult.error,
+      );
       return { ok: false };
     }
 
@@ -208,7 +221,13 @@ export class SpecificationWorkflow {
         findings: state.review.latest?.findings.filter((finding) => !finding.artifactId || finding.artifactId === artifact.id),
       });
     } catch (error) {
-      await this.fail(state, middleware, "artifact-generation", error instanceof Error ? error.message : "Artifact generation failed.", error);
+      await this.fail(
+        state,
+        middleware,
+        "artifact-generation",
+        error instanceof Error ? error.message : "Artifact generation failed.",
+        error,
+      );
       return { ok: false };
     }
 
@@ -240,7 +259,13 @@ export class SpecificationWorkflow {
     state.status = "validating";
     const validation = await this.dependencies.openSpecGateway.validate(state);
     if (!validation.context?.openspec.validation) {
-      await this.fail(state, middleware, "openspec-validation", validation.error?.message ?? "OpenSpec validation did not return validation context.", validation.error);
+      await this.fail(
+        state,
+        middleware,
+        "openspec-validation",
+        validation.error?.message ?? "OpenSpec validation did not return validation context.",
+        validation.error,
+      );
       return { ok: false };
     }
     state.validation.latest = validation.context.openspec.validation;
@@ -268,7 +293,13 @@ export class SpecificationWorkflow {
 
     const status = await this.dependencies.openSpecGateway.getStatus(state);
     if (!status.ok || !status.context) {
-      await this.fail(state, middleware, "openspec-status-validation-repair", status.error?.message ?? "OpenSpec status failed during validation repair.", status.error);
+      await this.fail(
+        state,
+        middleware,
+        "openspec-status-validation-repair",
+        status.error?.message ?? "OpenSpec status failed during validation repair.",
+        status.error,
+      );
       return { ok: false };
     }
 
@@ -278,7 +309,12 @@ export class SpecificationWorkflow {
       status.context.openspec.artifacts.filter((artifact) => artifact.authority === "workflow"),
     );
     if (revisionArtifactIds.length === 0) {
-      await this.fail(state, middleware, "validation-target-unknown", "OpenSpec validation failed without a deterministic artifact target.");
+      await this.fail(
+        state,
+        middleware,
+        "validation-target-unknown",
+        "OpenSpec validation failed without a deterministic artifact target.",
+      );
       return { ok: false };
     }
 
@@ -296,7 +332,13 @@ export class SpecificationWorkflow {
     const status = await this.dependencies.openSpecGateway.getStatus(state);
     const instructions = await this.dependencies.openSpecGateway.getInstructions(state);
     if (!status.ok || !status.context) {
-      await this.fail(state, middleware, "openspec-status-before-review", status.error?.message ?? "OpenSpec status failed before review.", status.error);
+      await this.fail(
+        state,
+        middleware,
+        "openspec-status-before-review",
+        status.error?.message ?? "OpenSpec status failed before review.",
+        status.error,
+      );
       return { ok: false };
     }
     if (!instructions.ok || !instructions.context) {
@@ -344,7 +386,13 @@ export class SpecificationWorkflow {
     for (const dependency of dependencies) {
       const read = await this.dependencies.artifactReader.read({ projectRoot: state.projectRoot, path: dependency.path });
       if (!read.ok || read.content === undefined) {
-        await this.fail(state, middleware, `artifact-read-${read.status}`, read.error?.message ?? "Dependency artifact read failed.", read.error);
+        await this.fail(
+          state,
+          middleware,
+          `artifact-read-${read.status}`,
+          read.error?.message ?? "Dependency artifact read failed.",
+          read.error,
+        );
         return [];
       }
       readDependencies.push({ ...dependency, content: read.content });
@@ -476,7 +524,9 @@ function affectedArtifactsFromFindings(findings: ReviewFinding[], fallbackArtifa
 
 function validationFindings(validation: OpenSpecValidation | undefined): ReviewFinding[] {
   const findings = validation?.findings ?? [];
-  if (findings.length === 0) return [fallbackFinding("openspec-validation", validation?.stderr || validation?.stdout || "OpenSpec validation failed.")];
+  if (findings.length === 0) {
+    return [fallbackFinding("openspec-validation", validation?.stderr || validation?.stdout || "OpenSpec validation failed.")];
+  }
   return findings.map((finding, index) => ({
     id: finding.code ?? finding.artifactId ?? finding.path ?? `openspec-validation-${index + 1}`,
     severity: "error",

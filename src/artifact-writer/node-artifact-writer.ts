@@ -75,7 +75,9 @@ type ResolvedPath =
   | { ok: false; status: "path-rejected"; message: string };
 
 function resolveArtifactPath(input: WriteArtifactInput): ResolvedPath {
-  if (!input.projectRoot || !input.path) return { ok: false, status: "path-rejected", message: "projectRoot and path are required" };
+  if (!input.projectRoot || !input.path) {
+    return { ok: false, status: "path-rejected", message: "projectRoot and path are required" };
+  }
   if (input.path.includes("\0")) {
     return { ok: false, status: "path-rejected", message: `Unsafe artifact path: ${input.path}` };
   }
