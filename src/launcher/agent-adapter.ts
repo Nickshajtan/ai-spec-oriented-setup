@@ -67,7 +67,7 @@ function initialInstruction(skillInvocation: string, input: LaunchAgentInput): s
   ];
   if (input.changeName) lines.push(`Change: ${input.changeName}`);
   lines.push(`Idea: ${input.idea?.trim() || "Not supplied; ask the user for the rough feature idea."}`);
-  return lines.join("\n");
+  return lines.join(" ");
 }
 
 function firstLine(value: string): string | undefined {

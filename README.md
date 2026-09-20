@@ -17,6 +17,7 @@ This is an engineering foundation, not a complete assistant yet. The repository 
 - a thin LiteLLM adapter for model completion;
 - a first vertical slice of the OpenSpec-aware interview core;
 - a Core `SpecificationWorkflow` that coordinates interview readiness, artifact generation, persistence, OpenSpec validation, independent review, revision, and reopen-for-input behavior.
+- a thin `ai-spec-core` runtime bridge that composes production dependencies and persists multi-turn workflow sessions;
 - a repository-local `specifier` agent skill for Codex and Claude Code;
 - an `ai-spec` launcher that selects a supported installed host agent and explicitly invokes that skill.
 
@@ -73,6 +74,31 @@ Without `--agent`, the launcher detects installed CLIs. It chooses the only avai
 
 The CLI does not implement specification logic. The skill does not implement specification logic. `SpecificationWorkflow` remains the single Core authority. See [Agent Skill & CLI Launcher](docs/agent-skill-cli.md).
 
+## Runtime Quick Start
+
+Configure the production model backend:
+
+```powershell
+$env:AI_SPEC_LITELLM_BASE_URL = "http://localhost:4000"
+$env:AI_SPEC_MODEL = "specifier"
+```
+
+Then use the product through a host agent:
+
+```text
+ai-spec "Add Redis caching to REST responses"
+```
+
+The flow is:
+
+```text
+ai-spec -> host agent -> Specifier skill -> ai-spec-core -> SpecificationWorkflow -> OpenSpec
+```
+
+The skill invokes `ai-spec-core start`, presents Core-generated questions, sends answers through `ai-spec-core answer`, and reports `ready` only after interview readiness, OpenSpec validation, and independent AI review all pass.
+
+For direct automation, `ai-spec-core start|answer|status` reads JSON from stdin and writes one structured JSON result to stdout. Runtime sessions are stored under `<project>/.ai-spec-core/sessions/` and can survive separate process invocations. The runtime owns dependency composition, state persistence, and transport; it does not decide questions, artifact order, validation policy, review outcomes, or OpenSpec structure.
+
 ## Development Commands
 
 ```powershell
@@ -81,13 +107,14 @@ npm run format:check
 npm run lint
 npm run typecheck
 npm test
+npm run test:runtime-e2e
 npm run test:coverage
 npm run openspec:smoke
 npm run skills:check
 npm run check
 ```
 
-`npm run check` is the local quality gate: format check, lint, typecheck, unit/core tests, and coverage thresholds. Tests mock model infrastructure and do not require real LLM credentials, a running LiteLLM instance, or paid external API calls.
+`npm run check` is the local quality gate: format check, lint, typecheck, unit/core tests, and coverage thresholds. Tests mock model infrastructure and do not require real LLM credentials, a running LiteLLM instance, or paid external API calls. `npm run test:runtime-e2e` crosses the real process and persisted-session boundary with a deterministic test `ModelPort` plus the real OpenSpec CLI.
 
 Coverage thresholds are enforced by `npm run test:coverage`:
 
@@ -104,6 +131,7 @@ GitHub Actions exposes three intended required checks:
 - `quality`
 - `tests`
 - `openspec-integration`
+- `runtime-e2e`
 
 Recommended branch protection for `main`:
 

@@ -1,11 +1,10 @@
 # Agent Skill & CLI Launcher
 
-Step 04 adds two entry points and keeps one specification execution path:
+The product exposes three local entry points and keeps one specification execution path:
 
 ```text
-Codex / Claude Code -> Specifier skill --+
-                                      +-> SpecificationWorkflow -> existing Core
-ai-spec -> selected agent -> skill ----+
+Codex / Claude Code -> Specifier skill -> ai-spec-core -> SpecificationWorkflow -> existing Core
+ai-spec -> selected agent -> skill -----+
 ```
 
 The CLI does not implement specification logic. The skill does not implement specification logic. `SpecificationWorkflow` remains the single Core authority for interview state, readiness, artifact generation/order, persistence, OpenSpec validation, independent review, revision, and reopen-for-input behavior.
@@ -29,7 +28,36 @@ The canonical skill is `skills/specifier/SKILL.md`. `npm run skills:sync` writes
 
 Commit all three files. `npm run skills:check` fails if either representation diverges from the canonical source.
 
-The skill tells the host to call the existing exported `SpecificationWorkflow.start` / `SpecificationWorkflow.answer` flow and relay Core-generated questions and structured results. If an embedding application has not wired the workflow's dependencies, the skill reports that missing integration; it does not invent another interview or artifact runtime.
+The skill tells the host to call the repository-local `ai-spec-core` executable and relay Core-generated questions and structured results. If the runtime cannot be configured, the skill reports that missing integration; it does not invent another interview or artifact runtime.
+
+## Core Runtime
+
+`ai-spec-core` is the stable process boundary used by agent skills:
+
+```text
+ai-spec-core start
+ai-spec-core answer
+ai-spec-core status
+```
+
+Each command reads one JSON object from stdin, writes one structured JSON result to stdout, and sends diagnostics to stderr. It never prompts interactively. `start` creates or loads the OpenSpec change through Core dependencies and persists workflow state under the target project. `answer` loads the same session and resumes `SpecificationWorkflow.answer`. `status` reads persisted state without advancing the workflow.
+
+Production model configuration is intentionally small:
+
+- `AI_SPEC_LITELLM_BASE_URL` is required;
+- `AI_SPEC_MODEL` selects the model name and defaults to `specifier`;
+- `AI_SPEC_LITELLM_API_KEY_ENV` optionally names the environment variable containing the LiteLLM API key;
+- `OPENSPEC_COMMAND` optionally overrides the OpenSpec executable name.
+
+Automated runtime E2E tests may set `AI_SPEC_RUNTIME_TEST_MODEL=1` to use a deterministic in-process `ModelPort`. That mode still goes through generation, OpenSpec validation, review, revision, and persisted session state; it does not bypass workflow invariants.
+
+Runtime sessions are stored at:
+
+```text
+<project>/.ai-spec-core/sessions/<session-id>.json
+```
+
+The format is versioned, project-local, JSON-only, and written via temp-file plus rename. Session IDs are validated before file access. Concurrent writes to the same session are not a supported collaboration mode for v0.1.
 
 ## CLI Usage
 

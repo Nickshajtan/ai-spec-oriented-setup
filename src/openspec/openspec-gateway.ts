@@ -116,8 +116,8 @@ export class CliOpenSpecGateway implements OpenSpecGateway {
     if (haltedAfter) return haltedAfter;
 
     return {
-      ok: cli.exitCode === 0,
-      status: cli.exitCode === 0 ? "instructions-read" : "command-failed",
+      ok: cli.exitCode === 0 || isMissingArtifactInstructionsResponse(raw),
+      status: cli.exitCode === 0 || isMissingArtifactInstructionsResponse(raw) ? "instructions-read" : "command-failed",
       context,
       middleware: { before, after },
     };
@@ -251,6 +251,7 @@ function collectArtifacts(raw: unknown): OpenSpecArtifact[] {
   const artifacts = new Map<string, OpenSpecArtifact>();
   collectDocumentedArtifacts(raw, artifacts);
   collectArtifactsFromValue(raw, artifacts);
+  if (isObject(raw)) collectResolvedArtifactPaths(raw, artifacts);
   return [...artifacts.values()];
 }
 
@@ -266,6 +267,27 @@ function collectDocumentedArtifacts(raw: unknown, artifacts: Map<string, OpenSpe
 
   const artifact = normalizeArtifactObject(raw.artifact, "documented");
   if (artifact) upsertArtifact(artifacts, artifact);
+}
+
+function collectResolvedArtifactPaths(raw: Record<string, unknown>, artifacts: Map<string, OpenSpecArtifact>): void {
+  if (!isObject(raw.artifactPaths)) return;
+
+  for (const [id, value] of Object.entries(raw.artifactPaths)) {
+    if (!isObject(value)) continue;
+    const resolvedPath = stringField(value, "resolvedOutputPath");
+    if (!resolvedPath) continue;
+    const existing = artifacts.get(id);
+    upsertArtifact(artifacts, {
+      ...(existing ?? {
+        id,
+        state: "unknown" as const,
+        authority: "workflow" as const,
+      }),
+      id,
+      path: resolvedPath,
+      raw: existing?.raw ?? value,
+    });
+  }
 }
 
 function collectArtifactsFromValue(value: unknown, artifacts: Map<string, OpenSpecArtifact>, parentKey?: string): void {
@@ -495,6 +517,25 @@ function parseJsonOutput(stdout: string): unknown | undefined {
     return JSON.parse(stdout);
   } catch {
     return undefined;
+  }
+}
+
+function isMissingArtifactInstructionsResponse(raw: unknown): boolean {
+  const messages: string[] = [];
+  collectStatusMessages(raw, messages);
+  return messages.some((message) => /Missing required argument <artifact>/i.test(message));
+}
+
+function collectStatusMessages(value: unknown, messages: string[]): void {
+  if (Array.isArray(value)) {
+    for (const item of value) collectStatusMessages(item, messages);
+    return;
+  }
+  if (!isObject(value)) return;
+  const message = stringField(value, "message");
+  if (message) messages.push(message);
+  for (const key of ["status", "items", "issues", "errors"]) {
+    collectStatusMessages(value[key], messages);
   }
 }
 

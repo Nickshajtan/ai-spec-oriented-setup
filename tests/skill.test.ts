@@ -19,8 +19,9 @@ test("agent skill representations exactly match the canonical source", async () 
 test("skill has portable metadata and delegates all lifecycle authority to Core", async () => {
   const skill = await readFile(canonicalPath, "utf8");
   assert.match(skill, /^---\nname: specifier\ndescription: .+\n---\n/);
+  assert.match(skill, /ai-spec-core start/);
+  assert.match(skill, /ai-spec-core answer/);
   assert.match(skill, /SpecificationWorkflow/);
-  assert.match(skill, /SpecificationWorkflow\.answer/);
   assert.match(skill, /Never decide readiness/);
   assert.match(skill, /Do not replace or modify existing `opsx:\*`/);
   assert.doesNotMatch(skill, /proposal\.md|design\.md|tasks\.md/);

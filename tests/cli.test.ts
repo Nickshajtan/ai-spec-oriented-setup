@@ -8,10 +8,11 @@ import { runCli, type CliIo } from "../src/cli/run-cli.ts";
 import type { AgentLauncher, LaunchAgentInput, LaunchAgentResult } from "../src/index.ts";
 
 test("parses the intentionally small CLI surface", () => {
+  const expectedProjectPath = path.resolve("/work", "app");
   assert.deepEqual(parseCliArguments(["--agent", "codex", "--change", "cache", "--project", "./app", "rough", "idea"], "/work"), {
     agent: "codex",
     changeName: "cache",
-    projectPath: "/work/app",
+    projectPath: expectedProjectPath,
     idea: "rough idea",
     help: false,
     version: false,

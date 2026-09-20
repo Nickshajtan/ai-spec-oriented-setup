@@ -208,7 +208,10 @@ export class SpecificationWorkflow {
     }
 
     const instructionArtifact = matchingArtifact(instructionsResult.context.openspec.artifacts, statusArtifact.id);
-    const artifact = { ...statusArtifact, ...(instructionArtifact ?? {}) };
+    const artifact =
+      instructionArtifact?.authority === "workflow"
+        ? { ...statusArtifact, ...instructionArtifact }
+        : { ...statusArtifact, instructions: instructionArtifact?.instructions ?? statusArtifact.instructions };
     const currentContent = mode === "revise" ? await this.readOptional(state, artifact.path, middleware) : undefined;
     if (state.status === "failed") return { ok: false };
     const dependencies = await this.readDependencies(state, artifact, middleware);

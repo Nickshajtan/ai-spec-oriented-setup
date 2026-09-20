@@ -18,7 +18,10 @@ This repository is the foundation for an OpenSpec-based interactive feature spec
 - Final readiness requires interview readiness, valid OpenSpec validation, and a passing review.
 - Review findings requiring human decisions must return to the existing Interview Core as structured gaps.
 - `needs_revision` should repair affected artifacts without unnecessarily involving the human.
+- The runtime is a composition and transport layer. It must not acquire specification-domain decisions owned by `SpecificationWorkflow`.
+- Do not create a second interview, artifact lifecycle, validation, or review implementation in CLI, skills, or runtime code.
 - Skills and CLI facades must not contain specification business logic; keep Core caller-agnostic.
+- New infrastructure must be justified by a concrete current product requirement, not hypothetical future reuse.
 - Middleware owns optional cross-cutting behavior over Specifier lifecycle events.
 - Domain events should use Specifier semantics such as `interview.*`, `openspec.*`, and `review.*`.
 - Model routing is outside this product.
