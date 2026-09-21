@@ -7,26 +7,37 @@ import test from "node:test";
 
 test("ai-spec detects a fake Codex executable and passes one literal Specifier instruction", async () => {
   const directory = await mkdtemp(path.join(tmpdir(), "ai-spec-e2e-"));
-  const executable = path.join(directory, "codex");
+  const executable = path.join(directory, process.platform === "win32" ? "codex.cmd" : "codex");
+  const script = path.join(directory, "codex-fake.mjs");
   const capture = path.join(directory, "args.json");
   const payload = '$(touch nope); "quotes" && echo unsafe';
   try {
     await writeFile(
-      executable,
-      `#!/usr/bin/env node
+      script,
+      `
 import { writeFileSync } from "node:fs";
 if (process.argv[2] === "--version") { console.log("codex-fake 1.0"); process.exit(0); }
 writeFileSync(process.env.AI_SPEC_CAPTURE, JSON.stringify(process.argv.slice(2)));
 `,
       "utf8",
     );
+    await writeFile(
+      executable,
+      process.platform === "win32"
+        ? `@echo off\r\n"${process.execPath}" "${script}" %*\r\n`
+        : `#!/usr/bin/env node\nimport "${script.replace(/\\/g, "/")}";\n`,
+      "utf8",
+    );
     await chmod(executable, 0o755);
 
-    const result = await run(process.execPath, ["bin/ai-spec.js", "--agent", "codex", "--project", directory, payload], {
-      ...process.env,
-      PATH: `${directory}${path.delimiter}${process.env.PATH ?? ""}`,
-      AI_SPEC_CAPTURE: capture,
-    });
+    const env: NodeJS.ProcessEnv = { ...process.env, AI_SPEC_CAPTURE: capture };
+    if (process.platform === "win32") {
+      delete env.PATH;
+      env.Path = `${directory}${path.delimiter}${process.env.Path ?? process.env.PATH ?? ""}`;
+    } else {
+      env.PATH = `${directory}${path.delimiter}${process.env.PATH ?? ""}`;
+    }
+    const result = await run(process.execPath, ["bin/ai-spec.js", "--agent", "codex", "--project", directory, payload], env);
     assert.equal(result.exitCode, 0, result.stderr);
     const args = JSON.parse(await readFile(capture, "utf8")) as string[];
     assert.equal(args.length, 1);

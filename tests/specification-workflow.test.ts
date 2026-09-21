@@ -509,6 +509,106 @@ test("model generator and reviewer use separate fresh model requests", async () 
   assert.notDeepEqual(model.requests[0]?.messages, model.requests[1]?.messages);
 });
 
+test("rejects model path override for concrete OpenSpec artifact path", async () => {
+  const gateway = new FakeOpenSpecGateway([[artifact("proposal", "openspec/changes/foo/proposal.md", "missing")]]);
+  const store = new MemoryArtifacts();
+  const result = await workflow(
+    gateway,
+    store,
+    new QueueGenerator([{ artifactId: "proposal", path: "package.json", content: "bad" }]),
+    new QueueReviewer([{ verdict: "pass", findings: [] }]),
+  ).start(startInput());
+
+  assert.equal(result.status, "failed");
+  assert.equal(result.state.failure?.code, "artifact-path-unauthorized");
+  assert.equal(store.files.has("package.json"), false);
+  assert.equal(store.files.has("openspec/changes/foo/proposal.md"), false);
+});
+
+test("uses authoritative concrete OpenSpec artifact path when model returns only content", async () => {
+  const gateway = new FakeOpenSpecGateway([
+    [artifact("proposal", "openspec/changes/foo/proposal.md", "missing")],
+    [artifact("proposal", "openspec/changes/foo/proposal.md", "complete")],
+  ]);
+  const store = new MemoryArtifacts();
+  const result = await workflow(
+    gateway,
+    store,
+    new QueueGenerator(["proposal content"]),
+    new QueueReviewer([{ verdict: "pass", findings: [] }]),
+  ).start(startInput());
+
+  assert.equal(result.status, "ready");
+  assert.equal(store.files.get("openspec/changes/foo/proposal.md"), "proposal content");
+});
+
+test("accepts concrete model path inside OpenSpec collection artifact boundary", async () => {
+  const gateway = new FakeOpenSpecGateway([
+    [artifact("specs", "openspec/changes/foo/specs/**/*.md", "missing")],
+    [artifact("specs", "openspec/changes/foo/specs/**/*.md", "complete")],
+  ]);
+  const store = new MemoryArtifacts();
+  const result = await workflow(
+    gateway,
+    store,
+    new QueueGenerator([{ artifactId: "specs", path: "openspec\\changes\\foo\\specs\\cache\\spec.md", content: "spec content" }]),
+    new QueueReviewer([{ verdict: "pass", findings: [] }]),
+  ).start(startInput());
+
+  assert.equal(result.status, "ready");
+  assert.equal(store.files.get("openspec/changes/foo/specs/cache/spec.md"), "spec content");
+});
+
+test("rejects model paths outside OpenSpec collection artifact boundary", async () => {
+  for (const invalidPath of [
+    "package.json",
+    "openspec/changes/foo/design.md",
+    "openspec/changes/other-change/specs/cache/spec.md",
+    "openspec/changes/foo/specs/**/*.md",
+    "",
+  ]) {
+    const gateway = new FakeOpenSpecGateway([[artifact("specs", "openspec/changes/foo/specs/**/*.md", "missing")]]);
+    const store = new MemoryArtifacts();
+    const result = await workflow(
+      gateway,
+      store,
+      new QueueGenerator([{ artifactId: "specs", path: invalidPath, content: "bad" }]),
+      new QueueReviewer([{ verdict: "pass", findings: [] }]),
+    ).start(startInput());
+
+    assert.equal(result.status, "failed", invalidPath);
+    assert.equal(result.state.failure?.code, "artifact-path-unauthorized", invalidPath);
+    assert.equal(store.writes.length, 0, invalidPath);
+  }
+});
+
+test("rejects model path redirect during revision overwrite", async () => {
+  const gateway = new FakeOpenSpecGateway([
+    [artifact("intent", "openspec/changes/custom/intent.md", "complete")],
+    [artifact("intent", "openspec/changes/custom/intent.md", "complete")],
+  ]);
+  const store = new MemoryArtifacts();
+  store.files.set("openspec/changes/custom/intent.md", "original");
+  store.files.set("package.json", "do not touch");
+  const result = await workflow(
+    gateway,
+    store,
+    new QueueGenerator([{ artifactId: "intent", path: "package.json", content: "redirected" }]),
+    new QueueReviewer([
+      {
+        verdict: "needs_revision",
+        findings: [{ id: "intent", severity: "error", artifactId: "intent", issue: "stale", reason: "stale" }],
+      },
+      { verdict: "pass", findings: [] },
+    ]),
+  ).start(startInput());
+
+  assert.equal(result.status, "failed");
+  assert.equal(result.state.failure?.code, "artifact-path-unauthorized");
+  assert.equal(store.files.get("openspec/changes/custom/intent.md"), "original");
+  assert.equal(store.files.get("package.json"), "do not touch");
+});
+
 function workflow(
   gateway: OpenSpecGateway,
   store: MemoryArtifacts,
@@ -721,15 +821,17 @@ class MemoryArtifacts implements ArtifactWriter, ArtifactReader {
 
 class QueueGenerator {
   calls: GenerateArtifactInput[] = [];
-  private readonly contents: string[];
+  private readonly contents: Array<string | GeneratedArtifact>;
 
-  constructor(contents: string[]) {
+  constructor(contents: Array<string | GeneratedArtifact>) {
     this.contents = contents;
   }
 
   async generate(input: GenerateArtifactInput): Promise<GeneratedArtifact> {
     this.calls.push(structuredClone(input));
-    return { artifactId: input.artifact.id, content: this.contents.shift() ?? `${input.artifact.id} content` };
+    const next = this.contents.shift();
+    if (typeof next === "object") return next;
+    return { artifactId: input.artifact.id, content: next ?? `${input.artifact.id} content` };
   }
 }
 

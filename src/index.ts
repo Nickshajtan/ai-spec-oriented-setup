@@ -11,6 +11,9 @@ export { LiteLLMModelAdapter } from "./model/litellm-model-adapter.ts";
 export { CliOpenSpecGateway } from "./openspec/openspec-gateway.ts";
 export { NodeProcessRunner } from "./process-runner.ts";
 export { DefaultAgentLauncher } from "./launcher/default-agent-launcher.ts";
+export { createSpecifierRuntime } from "./runtime/composition.ts";
+export { CoreSpecifierRuntime } from "./runtime/specifier-runtime.ts";
+export { RuntimeSessionStore, RuntimeSessionStoreError } from "./runtime/session-store.ts";
 export { ModelArtifactGenerator } from "./specification/model-artifact-generator.ts";
 export { ModelSpecReviewer } from "./specification/model-spec-reviewer.ts";
 export { SpecificationWorkflow } from "./specification/specification-workflow.ts";
@@ -100,6 +103,17 @@ export type {
 export type { CliOpenSpecGatewayOptions } from "./openspec/openspec-gateway.ts";
 export type { ProcessResult, ProcessRunner, ProcessRunOptions } from "./process-runner.ts";
 export type { AgentAvailability, AgentLauncher, LaunchAgentInput, LaunchAgentResult, SupportedAgent } from "./launcher/types.ts";
+export type { RuntimeCompositionConfig } from "./runtime/composition.ts";
+export type { CoreSpecifierRuntimeOptions } from "./runtime/specifier-runtime.ts";
+export type { PersistedRuntimeSession } from "./runtime/session-store.ts";
+export type {
+  AnswerSpecificationInput,
+  RuntimeFailure,
+  RuntimeResult,
+  RuntimeSessionInput,
+  SpecifierRuntime,
+  StartSpecificationInput,
+} from "./runtime/types.ts";
 export type {
   ActiveInterviewFact,
   AnswerSpecificationWorkflowInput,

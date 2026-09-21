@@ -28,6 +28,7 @@ export class ModelArtifactGenerator {
             "OpenSpec instructions, dependencies, paths, and validation expectations are authoritative.",
             "Use user facts as requirements. Treat accepted assumptions as assumptions, not user facts.",
             "Do not invent missing product decisions. Output only the complete artifact content.",
+            "If the authoritative output path is a glob or collection path, output JSON with a concrete path and content.",
           ].join(" "),
         },
         {
@@ -49,6 +50,25 @@ export class ModelArtifactGenerator {
       ],
     });
 
+    const parsed = parseGeneratedArtifactResponse(response.content);
+    if (parsed) return { artifactId: input.artifact.id, ...parsed };
     return { artifactId: input.artifact.id, content: response.content.trim() };
   }
+}
+
+function parseGeneratedArtifactResponse(content: string): { content: string; path?: string } | undefined {
+  try {
+    const parsed: unknown = JSON.parse(content);
+    if (!isObject(parsed) || typeof parsed.content !== "string") return undefined;
+    return {
+      content: parsed.content.trim(),
+      ...(typeof parsed.path === "string" && parsed.path.trim() ? { path: parsed.path } : {}),
+    };
+  } catch {
+    return undefined;
+  }
+}
+
+function isObject(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
 }

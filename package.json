@@ -4,7 +4,8 @@
   "private": true,
   "type": "module",
   "bin": {
-    "ai-spec": "./bin/ai-spec.js"
+    "ai-spec": "./bin/ai-spec.js",
+    "ai-spec-core": "./bin/ai-spec-core.js"
   },
   "engines": {
     "node": ">=22"
@@ -15,6 +16,7 @@
     "lint": "npx --yes eslint@9.36.0 .",
     "typecheck": "node scripts/typecheck.mjs",
     "test": "node --test --experimental-strip-types tests/*.test.ts",
+    "test:runtime-e2e": "node --test --experimental-strip-types tests/runtime-e2e.test.ts",
     "test:coverage": "node scripts/test-coverage.mjs",
     "openspec:smoke": "node --experimental-strip-types scripts/openspec-smoke.mjs",
     "skills:sync": "node scripts/sync-agent-skills.mjs --write",

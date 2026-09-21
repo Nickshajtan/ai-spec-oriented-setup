@@ -1,3 +1,4 @@
+import path from "node:path";
 import { MiddlewareBus } from "../bus.ts";
 import type { MiddlewareExecution } from "../middleware/types.ts";
 import type { OpenSpecArtifact, OpenSpecValidation } from "../openspec/types.ts";
@@ -208,7 +209,10 @@ export class SpecificationWorkflow {
     }
 
     const instructionArtifact = matchingArtifact(instructionsResult.context.openspec.artifacts, statusArtifact.id);
-    const artifact = { ...statusArtifact, ...(instructionArtifact ?? {}) };
+    const artifact =
+      instructionArtifact?.authority === "workflow"
+        ? { ...statusArtifact, ...instructionArtifact }
+        : { ...statusArtifact, instructions: instructionArtifact?.instructions ?? statusArtifact.instructions };
     const currentContent = mode === "revise" ? await this.readOptional(state, artifact.path, middleware) : undefined;
     if (state.status === "failed") return { ok: false };
     const dependencies = await this.readDependencies(state, artifact, middleware);
@@ -235,9 +239,15 @@ export class SpecificationWorkflow {
       return { ok: false };
     }
 
+    const pathResolution = resolveGeneratedArtifactPath(artifact.path, generated.path);
+    if (!pathResolution.ok) {
+      await this.fail(state, middleware, "artifact-path-unauthorized", pathResolution.message);
+      return { ok: false };
+    }
+    const generatedPath = pathResolution.path;
     const write = await this.dependencies.artifactWriter.write({
       projectRoot: state.projectRoot,
-      path: artifact.path,
+      path: generatedPath,
       content: generated.content,
       overwrite: mode === "revise",
     });
@@ -246,13 +256,13 @@ export class SpecificationWorkflow {
       return { ok: false };
     }
 
-    const read = await this.dependencies.artifactReader.read({ projectRoot: state.projectRoot, path: artifact.path });
+    const read = await this.dependencies.artifactReader.read({ projectRoot: state.projectRoot, path: generatedPath });
     if (!read.ok || read.content === undefined) {
       await this.fail(state, middleware, `artifact-read-${read.status}`, read.error?.message ?? "Artifact read failed.", read.error);
       return { ok: false };
     }
 
-    upsertGeneratedArtifact(state.generation.artifacts, { artifactId: artifact.id, path: artifact.path, content: read.content });
+    upsertGeneratedArtifact(state.generation.artifacts, { artifactId: artifact.id, path: generatedPath, content: read.content });
     state.generation.attempts += 1;
     state.generation.lastArtifactId = artifact.id;
     middleware.push(await this.emit("artifact.generated", state, { artifactId: artifact.id, mode, path: artifact.path }));
@@ -583,4 +593,55 @@ function cloneState(state: SpecificationWorkflowState): SpecificationWorkflowSta
 
 function normalizePath(filePath: string): string {
   return filePath.replace(/\\/g, "/");
+}
+
+type ArtifactPathResolution = { ok: true; path: string } | { ok: false; message: string };
+
+function resolveGeneratedArtifactPath(authoritativePath: string, generatedPath: string | undefined): ArtifactPathResolution {
+  const authoritative = normalizeArtifactAuthorityPath(authoritativePath);
+  if (!authoritative) return { ok: false, message: "OpenSpec artifact path is invalid." };
+
+  if (!isPatternPath(authoritative)) {
+    if (generatedPath === undefined) return { ok: true, path: authoritativePath };
+    const generated = normalizeArtifactAuthorityPath(generatedPath);
+    if (generated && generated === authoritative) return { ok: true, path: authoritativePath };
+    return { ok: false, message: "Model output path does not match the concrete OpenSpec artifact path." };
+  }
+
+  if (generatedPath === undefined) {
+    return { ok: false, message: "Model output must include a concrete path for OpenSpec collection artifacts." };
+  }
+  const generated = normalizeArtifactAuthorityPath(generatedPath);
+  if (!generated) return { ok: false, message: "Model output artifact path is invalid." };
+  if (isPatternPath(generated)) return { ok: false, message: "Model output artifact path must be concrete." };
+  if (!matchesOpenSpecPattern(authoritative, generated)) {
+    return { ok: false, message: "Model output path is outside the OpenSpec artifact path boundary." };
+  }
+  return { ok: true, path: generated };
+}
+
+function normalizeArtifactAuthorityPath(filePath: string): string | undefined {
+  const normalized = path.posix.normalize(filePath.replace(/\\/g, "/").trim());
+  if (!normalized || normalized === ".") return undefined;
+  return normalized;
+}
+
+function isPatternPath(filePath: string): boolean {
+  return filePath.includes("*");
+}
+
+function matchesOpenSpecPattern(pattern: string, candidate: string): boolean {
+  const deepCollection = pattern.match(/^(.*\/)\*\*\/([^/]*\*[^/]*)$/);
+  if (!deepCollection) return false;
+
+  const [, prefix, filePattern] = deepCollection;
+  if (!candidate.startsWith(prefix)) return false;
+  const relative = candidate.slice(prefix.length);
+  if (!relative || !relative.includes("/") || relative.split("/").some((part) => part === "" || part === "." || part === "..")) {
+    return false;
+  }
+
+  if (filePattern === "*.md") return relative.endsWith(".md");
+  if (filePattern.startsWith("*")) return relative.endsWith(filePattern.slice(1));
+  return false;
 }
