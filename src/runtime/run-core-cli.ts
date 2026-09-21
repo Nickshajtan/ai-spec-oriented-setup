@@ -1,5 +1,6 @@
 import { stat } from "node:fs/promises";
 import { createSpecifierRuntime } from "./composition.ts";
+import type { SpecifierRuntime } from "./types.ts";
 import type { RuntimeResult } from "./types.ts";
 
 export interface CoreCliIo {
@@ -8,7 +9,11 @@ export interface CoreCliIo {
   stderr(message: string): void;
 }
 
-export async function runCoreCli(argv: string[], io: CoreCliIo = processIo): Promise<number> {
+export interface CoreCliOptions {
+  createRuntime?: () => SpecifierRuntime;
+}
+
+export async function runCoreCli(argv: string[], io: CoreCliIo = processIo, options: CoreCliOptions = {}): Promise<number> {
   const command = argv[0];
   if (command === "--help" || command === "-h" || command === undefined) {
     io.stdout(helpText);
@@ -25,7 +30,7 @@ export async function runCoreCli(argv: string[], io: CoreCliIo = processIo): Pro
 
   let result: RuntimeResult;
   try {
-    const runtime = createSpecifierRuntime();
+    const runtime = options.createRuntime?.() ?? createSpecifierRuntime();
     if (command === "start") result = await runtime.start(requireObject(input));
     else if (command === "answer") result = await runtime.answer(requireObject(input));
     else if (command === "status") result = await runtime.status(requireObject(input));

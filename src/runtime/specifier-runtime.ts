@@ -2,13 +2,7 @@ import path from "node:path";
 import { SpecificationWorkflow } from "../specification/specification-workflow.ts";
 import type { SpecificationWorkflowResult, SpecificationWorkflowState } from "../specification/types.ts";
 import { RuntimeSessionStore, RuntimeSessionStoreError } from "./session-store.ts";
-import type {
-  AnswerSpecificationInput,
-  RuntimeResult,
-  RuntimeSessionInput,
-  SpecifierRuntime,
-  StartSpecificationInput,
-} from "./types.ts";
+import type { AnswerSpecificationInput, RuntimeResult, RuntimeSessionInput, SpecifierRuntime, StartSpecificationInput } from "./types.ts";
 
 export interface CoreSpecifierRuntimeOptions {
   workflow: SpecificationWorkflow;
@@ -125,13 +119,7 @@ function failedFromError(error: unknown, sessionId?: string): RuntimeResult {
   return failed("runtime-error", error instanceof Error ? error.message : "Runtime execution failed.", sessionId);
 }
 
-function failed(
-  code: string,
-  message: string,
-  sessionId?: string,
-  state?: SpecificationWorkflowState,
-  details?: unknown,
-): RuntimeResult {
+function failed(code: string, message: string, sessionId?: string, state?: SpecificationWorkflowState, details?: unknown): RuntimeResult {
   return {
     status: "failed",
     sessionId,
@@ -149,6 +137,10 @@ function changeNameFromIdea(idea: string, suffix: string): string {
       .replace(/^-+|-+$/g, "")
       .slice(0, 48)
       .replace(/-+$/g, "") || "spec-change";
-  const safeSuffix = suffix.toLowerCase().replace(/[^a-z0-9]+/g, "").slice(0, 8) || "session";
+  const safeSuffix =
+    suffix
+      .toLowerCase()
+      .replace(/[^a-z0-9]+/g, "")
+      .slice(0, 8) || "session";
   return `${slug}-${safeSuffix}`;
 }

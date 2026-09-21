@@ -238,9 +238,10 @@ export class SpecificationWorkflow {
       return { ok: false };
     }
 
+    const generatedPath = generated.path ?? artifact.path;
     const write = await this.dependencies.artifactWriter.write({
       projectRoot: state.projectRoot,
-      path: artifact.path,
+      path: generatedPath,
       content: generated.content,
       overwrite: mode === "revise",
     });
@@ -249,13 +250,13 @@ export class SpecificationWorkflow {
       return { ok: false };
     }
 
-    const read = await this.dependencies.artifactReader.read({ projectRoot: state.projectRoot, path: artifact.path });
+    const read = await this.dependencies.artifactReader.read({ projectRoot: state.projectRoot, path: generatedPath });
     if (!read.ok || read.content === undefined) {
       await this.fail(state, middleware, `artifact-read-${read.status}`, read.error?.message ?? "Artifact read failed.", read.error);
       return { ok: false };
     }
 
-    upsertGeneratedArtifact(state.generation.artifacts, { artifactId: artifact.id, path: artifact.path, content: read.content });
+    upsertGeneratedArtifact(state.generation.artifacts, { artifactId: artifact.id, path: generatedPath, content: read.content });
     state.generation.attempts += 1;
     state.generation.lastArtifactId = artifact.id;
     middleware.push(await this.emit("artifact.generated", state, { artifactId: artifact.id, mode, path: artifact.path }));

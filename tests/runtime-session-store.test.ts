@@ -3,7 +3,7 @@ import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import test from "node:test";
-import { RuntimeSessionStore, RuntimeSessionStoreError } from "../src/index.ts";
+import { createSpecifierRuntime, RuntimeSessionStore, RuntimeSessionStoreError } from "../src/index.ts";
 import type { SpecificationWorkflowState } from "../src/index.ts";
 
 test("runtime session store persists and loads a valid workflow state", async () => {
@@ -19,6 +19,21 @@ test("runtime session store persists and loads a valid workflow state", async ()
     assert.equal(loaded.createdAt, "2026-09-20T00:00:00.000Z");
   } finally {
     await rm(projectRoot, { recursive: true, force: true });
+  }
+});
+
+test("production runtime composition ignores former deterministic test-model environment switch", () => {
+  const previousBaseUrl = process.env.AI_SPEC_LITELLM_BASE_URL;
+  const previousTestModel = process.env.AI_SPEC_RUNTIME_TEST_MODEL;
+  try {
+    delete process.env.AI_SPEC_LITELLM_BASE_URL;
+    process.env.AI_SPEC_RUNTIME_TEST_MODEL = "1";
+    assert.throws(() => createSpecifierRuntime(), /AI_SPEC_LITELLM_BASE_URL is required/);
+  } finally {
+    if (previousBaseUrl === undefined) delete process.env.AI_SPEC_LITELLM_BASE_URL;
+    else process.env.AI_SPEC_LITELLM_BASE_URL = previousBaseUrl;
+    if (previousTestModel === undefined) delete process.env.AI_SPEC_RUNTIME_TEST_MODEL;
+    else process.env.AI_SPEC_RUNTIME_TEST_MODEL = previousTestModel;
   }
 });
 
@@ -38,10 +53,7 @@ test("runtime session store reports missing, corrupt, incompatible, and traversa
       JSON.stringify({ version: 99, sessionId: "future", state: state("future") }),
       "utf8",
     );
-    await assert.rejects(
-      () => new RuntimeSessionStore().load(projectRoot, "future"),
-      errorWithCode("session-version-unsupported"),
-    );
+    await assert.rejects(() => new RuntimeSessionStore().load(projectRoot, "future"), errorWithCode("session-version-unsupported"));
 
     const files = await readFile(path.join(sessions, "future.json"), "utf8");
     assert.doesNotMatch(files, /API_KEY|Bearer|secret/i);
@@ -50,8 +62,91 @@ test("runtime session store reports missing, corrupt, incompatible, and traversa
   }
 });
 
+test("runtime session store rejects malformed persisted workflow state before Core use", async () => {
+  const projectRoot = await mkdtemp(path.join(tmpdir(), "runtime-store-invalid-state-"));
+  const sessions = path.join(projectRoot, ".ai-spec-core", "sessions");
+  await mkdir(sessions, { recursive: true });
+  try {
+    const cases: Array<{ name: string; mutate: (session: any) => void; code?: string }> = [
+      {
+        name: "missing projectRoot",
+        mutate: (session) => {
+          delete session.state.projectRoot;
+        },
+      },
+      {
+        name: "invalid workflow status",
+        mutate: (session) => {
+          session.state.status = "done";
+        },
+      },
+      {
+        name: "missing generation state",
+        mutate: (session) => {
+          delete session.state.generation;
+        },
+      },
+      {
+        name: "invalid validation state",
+        mutate: (session) => {
+          session.state.validation = { latest: { valid: true } };
+        },
+      },
+      {
+        name: "invalid review state",
+        mutate: (session) => {
+          session.state.review = { attempts: [{ verdict: "maybe", findings: [] }] };
+        },
+      },
+      {
+        name: "malformed interview state",
+        mutate: (session) => {
+          session.state.interview.readiness = { ready: "yes" };
+        },
+      },
+      {
+        name: "session and interview id mismatch",
+        mutate: (session) => {
+          session.state.interview.id = "other-session";
+        },
+      },
+      {
+        name: "unsupported version",
+        code: "session-version-unsupported",
+        mutate: (session) => {
+          session.version = 2;
+        },
+      },
+    ];
+
+    for (const testCase of cases) {
+      const sessionId = testCase.name.replace(/[^a-z0-9]+/gi, "-");
+      const session = persisted(sessionId);
+      testCase.mutate(session);
+      await writeFile(path.join(sessions, `${sessionId}.json`), JSON.stringify(session), "utf8");
+      await assert.rejects(
+        () => new RuntimeSessionStore().load(projectRoot, sessionId),
+        errorWithCode(testCase.code ?? "session-corrupt"),
+        testCase.name,
+      );
+    }
+  } finally {
+    await rm(projectRoot, { recursive: true, force: true });
+  }
+});
+
 function errorWithCode(code: string) {
   return (error: unknown) => error instanceof RuntimeSessionStoreError && error.code === code;
+}
+
+function persisted(sessionId: string) {
+  return {
+    version: 1,
+    sessionId,
+    createdAt: "2026-09-20T00:00:00.000Z",
+    updatedAt: "2026-09-20T00:00:00.000Z",
+    state: state(sessionId),
+  };
 }
 
 function state(sessionId: string): SpecificationWorkflowState {

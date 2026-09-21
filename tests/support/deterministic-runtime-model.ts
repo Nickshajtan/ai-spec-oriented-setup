@@ -1,4 +1,5 @@
-import type { ModelPort, ModelRequest, ModelResponse } from "../model/types.ts";
+import path from "node:path";
+import type { ModelPort, ModelRequest, ModelResponse } from "../../src/model/types.ts";
 
 export class DeterministicRuntimeModel implements ModelPort {
   async complete(request: ModelRequest): Promise<ModelResponse> {
@@ -48,16 +49,18 @@ function artifact(request: ModelRequest): string {
     return [
       "## Why",
       "",
-      "Capture a deterministic feature specification through the runtime bridge.",
+      "REST responses need deterministic cache behavior without changing failure semantics.",
       "",
       "## What Changes",
       "",
-      `- ${mode} proposal content for the requested capability.`,
-      "- Include the user's fallback behavior answer.",
+      `- ${mode} proposal content for cached REST responses.`,
+      "- Cache eligible REST responses.",
+      "- Fall back to the uncached database path when the cache is unavailable.",
       "",
       "## Capabilities",
       "",
       "### New Capabilities",
+      "- `redis-rest-cache`: REST response caching behavior.",
       "",
       "### Modified Capabilities",
       "",
@@ -69,19 +72,78 @@ function artifact(request: ModelRequest): string {
       .filter(Boolean)
       .join("\n");
   }
+  if (artifactId === "specs") {
+    return JSON.stringify({
+      path: concreteSpecPath(payload),
+      content: [
+        "## Purpose",
+        "",
+        "Defines how eligible REST responses are cached while preserving existing fallback behavior when caching is unavailable.",
+        "",
+        "## ADDED Requirements",
+        "",
+        "### Requirement: Cached REST responses",
+        "The system SHALL cache eligible REST responses and preserve the current uncached database behavior when the cache cannot be used.",
+        "",
+        "#### Scenario: Redis unavailable",
+        "- **WHEN** Redis is unavailable",
+        "- **THEN** the system falls back to the current uncached database path",
+        "",
+        "#### Scenario: Eligible response cached",
+        "- **WHEN** an eligible REST response is requested repeatedly",
+        "- **THEN** the system returns the cached response according to the cache policy",
+        "",
+        mode === "Revised" ? "Reviewed update." : "",
+      ]
+        .filter(Boolean)
+        .join("\n"),
+    });
+  }
   if (artifactId === "tasks") {
-    return ["## Tasks", "", "- [ ] Implement the specified behavior.", mode === "Revised" ? "- [ ] Apply reviewer update." : ""]
+    return [
+      "## 1. Runtime E2E",
+      "",
+      "- [ ] 1.1 Implement cached REST response behavior and verify runtime E2E generated artifacts remain valid",
+      mode === "Revised" ? "- [ ] 1.2 Apply reviewer update and verify OpenSpec validation passes" : "",
+    ]
       .filter(Boolean)
       .join("\n");
   }
   if (artifactId === "design") {
-    return ["## Design", "", `${mode} design for the requested capability.`, mode === "Revised" ? "Reviewed update." : ""]
+    return [
+      "## Context",
+      "",
+      "See proposal.md for motivation. The cache must be optional at runtime.",
+      "",
+      "## Goals / Non-Goals",
+      "",
+      "**Goals:** Preserve fallback behavior when Redis is unavailable.",
+      "",
+      "**Non-Goals:** Change database semantics.",
+      "",
+      "## Decisions",
+      "",
+      `${mode} design keeps cache reads behind the existing REST response path with database fallback.`,
+      "",
+      "## Risks / Trade-offs",
+      "",
+      "Cache outage -> fall back to the uncached database path.",
+      "",
+      mode === "Revised" ? "Reviewed update." : "",
+    ]
       .filter(Boolean)
       .join("\n");
   }
   return [`# ${artifactId}`, "", `${mode} content for ${artifactId}.`, mode === "Revised" ? "Reviewed update." : ""]
     .filter(Boolean)
     .join("\n");
+}
+
+function concreteSpecPath(payload: Record<string, any>): string {
+  const artifactPath = stringValue(payload.artifact?.path) ?? "openspec/changes/redis-rest-cache/specs/**/*.md";
+  const normalized = artifactPath.replace(/\\/g, "/");
+  const prefix = normalized.split("/specs/")[0] ?? "openspec/changes/redis-rest-cache";
+  return path.posix.join(prefix, "specs", "redis-rest-cache", "spec.md");
 }
 
 function review(request: ModelRequest): string {
@@ -126,5 +188,5 @@ function stringValue(value: unknown): string | undefined {
 }
 
 function isObject(value: unknown): value is Record<string, any> {
-  return typeof value === "object" && value !== null;
+  return typeof value === "object" && value !== null && !Array.isArray(value);
 }

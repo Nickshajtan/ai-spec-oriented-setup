@@ -26,6 +26,7 @@ export interface GenerateArtifactInput {
 export interface GeneratedArtifact {
   artifactId: string;
   content: string;
+  path?: string;
 }
 
 export interface ArtifactGenerator {

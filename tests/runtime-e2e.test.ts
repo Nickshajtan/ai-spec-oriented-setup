@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, rm } from "node:fs/promises";
 import path from "node:path";
 import { spawn } from "node:child_process";
 import test from "node:test";
@@ -28,32 +28,6 @@ test("ai-spec-core start and answer cross process and persisted-session boundari
     assert.match(start.json.question.text, /unavailable/i);
     assert.equal(typeof start.json.sessionId, "string");
 
-    const changePath = path.join(projectRoot, "openspec", "changes", "redis-rest-cache");
-    await mkdir(changePath, { recursive: true });
-    const metadataPath = path.join(changePath, ".openspec.yaml");
-    const metadata = await readFile(metadataPath, "utf8").catch(() => "name: redis-rest-cache\n");
-    await writeFile(metadataPath, `${metadata.trimEnd()}\n`, "utf8");
-    const specPath = path.join(changePath, "specs", "redis-rest-cache", "spec.md");
-    await mkdir(path.dirname(specPath), { recursive: true });
-    await writeFile(
-      specPath,
-      [
-        "# Redis REST Cache Spec",
-        "",
-        "## ADDED Requirements",
-        "",
-        "### Requirement: Cached REST responses",
-        "",
-        "The system SHALL cache eligible REST responses.",
-        "",
-        "#### Scenario: Redis unavailable",
-        "",
-        "- **WHEN** Redis is unavailable",
-        "- **THEN** the system falls back to the uncached database path",
-      ].join("\n"),
-      "utf8",
-    );
-
     const answer = await runCore("answer", {
       projectRoot,
       sessionId: start.json.sessionId,
@@ -66,6 +40,22 @@ test("ai-spec-core start and answer cross process and persisted-session boundari
     assert.equal(answer.json.review.verdict, "pass");
     assert.ok(answer.json.artifacts.length > 0);
 
+    const changePath = path.join(projectRoot, "openspec", "changes", "redis-rest-cache");
+    const proposal = await readFile(path.join(changePath, "proposal.md"), "utf8");
+    const spec = await readFile(path.join(changePath, "specs", "redis-rest-cache", "spec.md"), "utf8");
+    const design = await readFile(path.join(changePath, "design.md"), "utf8");
+    const tasks = await readFile(path.join(changePath, "tasks.md"), "utf8");
+    assert.match(proposal, /Reviewed update/);
+    assert.match(spec, /Redis unavailable/);
+    assert.match(design, /fallback/i);
+    assert.match(tasks, /- \[ \] 1\.1/);
+    assert.deepEqual(answer.json.artifacts.map((artifact: { artifactId: string }) => artifact.artifactId).sort(), [
+      "design",
+      "proposal",
+      "specs",
+      "tasks",
+    ]);
+
     const status = await runCore("status", { projectRoot, sessionId: start.json.sessionId });
     assert.equal(status.exitCode, 0, status.stderr);
     assert.equal(status.json.status, "ready");
@@ -76,9 +66,9 @@ test("ai-spec-core start and answer cross process and persisted-session boundari
 
 function runCore(command: string, input: unknown): Promise<{ exitCode: number; stdout: string; stderr: string; json: any }> {
   return new Promise((resolve) => {
-    const child = spawn(process.execPath, ["bin/ai-spec-core.js", command], {
+    const child = spawn(process.execPath, ["--experimental-strip-types", "tests/support/runtime-test-cli.ts", command], {
       cwd: process.cwd(),
-      env: { ...process.env, AI_SPEC_RUNTIME_TEST_MODEL: "1" },
+      env: { ...process.env },
       shell: false,
       stdio: ["pipe", "pipe", "pipe"],
     });

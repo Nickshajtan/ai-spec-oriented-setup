@@ -23,7 +23,9 @@ writeFileSync(process.env.AI_SPEC_CAPTURE, JSON.stringify(process.argv.slice(2))
     );
     await writeFile(
       executable,
-      process.platform === "win32" ? `@echo off\r\n"${process.execPath}" "${script}" %*\r\n` : `#!/usr/bin/env node\nimport "${script.replace(/\\/g, "/")}";\n`,
+      process.platform === "win32"
+        ? `@echo off\r\n"${process.execPath}" "${script}" %*\r\n`
+        : `#!/usr/bin/env node\nimport "${script.replace(/\\/g, "/")}";\n`,
       "utf8",
     );
     await chmod(executable, 0o755);

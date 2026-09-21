@@ -12,7 +12,6 @@ import { ModelArtifactGenerator } from "../specification/model-artifact-generato
 import { ModelSpecReviewer } from "../specification/model-spec-reviewer.ts";
 import { SpecificationWorkflow } from "../specification/specification-workflow.ts";
 import { CoreSpecifierRuntime } from "./specifier-runtime.ts";
-import { DeterministicRuntimeModel } from "./test-model-port.ts";
 
 export interface RuntimeCompositionConfig {
   model?: ModelPort;
@@ -21,7 +20,6 @@ export interface RuntimeCompositionConfig {
   liteLlmApiKeyEnv?: string;
   liteLlmTimeoutMs?: number;
   openspecCommand?: string;
-  useDeterministicTestModel?: boolean;
 }
 
 export function createSpecifierRuntime(config: RuntimeCompositionConfig = {}): CoreSpecifierRuntime {
@@ -52,13 +50,9 @@ export function createSpecifierRuntime(config: RuntimeCompositionConfig = {}): C
 }
 
 function createModel(config: RuntimeCompositionConfig): ModelPort {
-  if (config.useDeterministicTestModel || process.env.AI_SPEC_RUNTIME_TEST_MODEL === "1") {
-    return new DeterministicRuntimeModel();
-  }
-
   const baseUrl = config.liteLlmBaseUrl ?? process.env.AI_SPEC_LITELLM_BASE_URL;
   if (!baseUrl) {
-    throw new Error("AI_SPEC_LITELLM_BASE_URL is required unless AI_SPEC_RUNTIME_TEST_MODEL=1 is set for tests.");
+    throw new Error("AI_SPEC_LITELLM_BASE_URL is required for production runtime model configuration.");
   }
 
   return new LiteLLMModelAdapter({
